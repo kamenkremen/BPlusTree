@@ -19,7 +19,10 @@ struct Node {
 #[allow(dead_code)]
 impl BPlus {
     fn new(t: usize) -> Self {
-        Self {t, root: None, nodes: Vec::new()}
+        let root = Self::create_new_node(true);
+        let mut nodes: Vec<Box<Node>> = Vec::new();
+        nodes.push(Box::new(root));
+        Self {t, root: Some(0), nodes: nodes}
     }
 
     fn find_leaf(&self, current_sub_tree: Option<usize>, key: usize) -> Option<usize> {
@@ -72,7 +75,7 @@ impl BPlus {
     }
     
     fn split(mut self, node: usize) -> BPlus {
-        let new_node = Box::new(Self::create_new_node());
+        let new_node = Box::new(Self::create_new_node(false));
         self.nodes.push(new_node);
 
         let new_node = self.nodes.len() - 1;
@@ -115,7 +118,7 @@ impl BPlus {
         }
         
         if self.root.unwrap() == node{
-            let mut new_root = Self::create_new_node();
+            let mut new_root = Self::create_new_node(false);
             new_root.keys[0] = mid_key;
             new_root.child.push(node);
             new_root.child.push(new_node);
@@ -156,8 +159,8 @@ impl BPlus {
         self
     }
 
-    fn create_new_node() -> Node { 
-        let new_node = Node{leaf : false, key_num: 0, keys: Vec::new(), parent: None, child: Vec::new(), pointers: Vec::new(), left: None, right: None};
+    fn create_new_node(leaf: bool) -> Node {
+        let new_node = Node{leaf : leaf, key_num: 0, keys: Vec::new(), parent: None, child: Vec::new(), pointers: Vec::new(), left: None, right: None};
         new_node
     }
 
@@ -363,6 +366,10 @@ mod tests {
     fn test_insert_and_find() {
         let mut tree: BPlus = BPlus::new(2);
         tree = tree.insert(1, 1);
+        tree = tree.insert(2, 1);
+        tree = tree.insert(3, 2);
         assert_eq!(tree.find(1), Some(1));
+        assert_eq!(tree.find(2), Some(1));
+        assert_eq!(tree.find(3), Some(2));
     }
 }
