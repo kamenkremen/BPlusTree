@@ -10,7 +10,6 @@ struct Node {
     leaf: bool,
     key_num: usize,
     keys: Vec<usize>,
-    parent: Option<usize>,
     child: Vec<usize>,
     pointers: Vec<ValueType>,
     left: Option<usize>,
@@ -25,351 +24,340 @@ impl BPlus {
         Self {t, root: Some(0), nodes: nodes}
     }
 
-    fn find_leaf(&self, current_sub_tree: Option<usize>, key: usize) -> Option<usize> {
-        match current_sub_tree {
-            Some(x) => {
-                let cur = &self.nodes[x];
-                if !cur.leaf {
-                    for i in 0..cur.key_num {
-                        if i == cur.key_num || key < cur.keys[i as usize] {
-                            Self::find_leaf(self, Some(i as usize), key)
-                        } else {continue};
-                    };
-                };
-                Some(x)
-            },
-            None => None,
-        }
-    }
-
-    fn find(&self, key: usize) -> Option<ValueType> {
-        let node = self.find_leaf(self.root, key);
-        match node {
-            Some(x)=>Some(self.nodes[x].pointers[self.find_key(x, key)]),
-            None=>None
-        }
-    }
-
-    fn insert(mut self, key: usize, value: ValueType) -> BPlus {
-        let leaf = Self::find_leaf(&self, self.root, key).unwrap();
-        let mut pos = 0;
-        while pos < self.nodes[leaf].key_num && self.nodes[leaf].keys[pos] < key {
-            pos += 1;
-        }
-        
-        self.nodes[leaf].keys.push(0);
-        self.nodes[leaf].pointers.push(0);
-
-        for i in self.nodes[leaf].key_num..pos { 
-            self.nodes[leaf].keys[i] = self.nodes[leaf].keys[i - 1];
-            self.nodes[leaf].pointers[i] = self.nodes[leaf].pointers[i - 1];
-        }
-        self.nodes[leaf].keys[pos] = key;
-        self.nodes[leaf].pointers[pos] = value;
-        self.nodes[leaf].key_num += 1;
-    
-        if self.nodes[leaf].key_num == 2 * self.t {
-            return Self::split(self, leaf);
-        }
-        self
-    }
-    
-    fn split(mut self, node: usize) -> BPlus {
-        let new_node = Box::new(Self::create_new_node(false));
-        self.nodes.push(new_node);
-
-        let new_node = self.nodes.len() - 1;
-        
-        self.nodes[new_node].right = self.nodes[node].right;
-        if self.nodes[node].right.is_some() {
-            let temp = self.nodes[node].right.unwrap();
-            self.nodes[temp].left = Some(new_node);
-        }
-
-        self.nodes[node].right = Some(new_node);
-        self.nodes[new_node].left = Some(node);
-
-        let mid_key = self.nodes[node].keys[self.t];
-        self.nodes[new_node].key_num = self.t - 1;
-        self.nodes[node].key_num = self.t - 1;
-
-
-        let temp = self.nodes[new_node].key_num;
-        for i in 0..temp-1 {
-            self.nodes[new_node].keys[i] = self.nodes[node].keys[i + self.t + 1];
-            self.nodes[new_node].child[i] = self.nodes[node].child[i + self.t + 1];
-            self.nodes[new_node].pointers[i] = self.nodes[node].pointers[i + self.t + 1];
-        }
-        
-        self.nodes[new_node].child[temp + 1] = self.nodes[node].child[2 * self.t];
-
-        if self.nodes[node].leaf {
-            self.nodes[new_node].key_num += 1;
-            self.nodes[new_node].keys.push(0);
-            self.nodes[new_node].leaf = true;
-
-            let temp = self.nodes[new_node].key_num;
-            for i in temp - 1..1 {
-                self.nodes[new_node].keys[i] = self.nodes[new_node].keys[i - 1];
-                self.nodes[new_node].pointers[i] = self.nodes[new_node].pointers[i - 1];
-            }
-            self.nodes[new_node].keys[0] = self.nodes[node].keys[self.t];
-            self.nodes[new_node].pointers[0] = self.nodes[node].pointers[self.t];
-        }
-        
-        if self.root.unwrap() == node{
-            let mut new_root = Self::create_new_node(false);
-            new_root.keys[0] = mid_key;
-            new_root.child.push(node);
-            new_root.child.push(new_node);
-            new_root.key_num = 1;
-            self.nodes.push(Box::new(new_root));
-            let new_root = self.nodes.len() - 1;
-            self.root = Some(new_root);
-
-            self.nodes[node].parent = Some(new_root);
-            self.nodes[new_node].parent = Some(new_root);
-        } else {
-            self.nodes[new_node].parent = self.nodes[node].parent;
-
-            let parent = self.nodes[node].parent.unwrap();
-
-            let mut pos = 0;
-            while pos < self.nodes[parent].key_num && self.nodes[parent].keys[pos] < mid_key {
-                pos += 1;
-            }
-
-            self.nodes[parent].keys.push(0);
-            self.nodes[parent].child.push(0);
-
-            for i in self.nodes[parent].key_num..pos { 
-                self.nodes[parent].keys[i] = self.nodes[parent].keys[i - 1];
-            }
-            for i in self.nodes[parent].key_num + 1..pos + 1 { 
-                self.nodes[parent].child[i] = self.nodes[parent].child[i - 1];
-            }
-            self.nodes[parent].keys[pos] = mid_key;
-            self.nodes[parent].child[pos + 1] = new_node;
-            self.nodes[parent].key_num += 1;
-            
-            if self.nodes[parent].key_num == 2 * self.t {
-                return Self::split(self, parent)
-            }
-        }
-        self
-    }
-
     fn create_new_node(leaf: bool) -> Node {
-        let new_node = Node{leaf : leaf, key_num: 0, keys: Vec::new(), parent: None, child: Vec::new(), pointers: Vec::new(), left: None, right: None};
+        let new_node = Node{leaf : leaf, key_num: 0, keys: Vec::new(), child: Vec::new(), pointers: Vec::new(), left: None, right: None};
         new_node
     }
 
-    fn get_predecessor(&self, node: usize, index: usize) -> usize
-    {
-        let mut curr = self.nodes[node].child[index];
-        while !self.nodes[curr].leaf {
-            curr = self.nodes[curr].child[self.nodes[curr].key_num];
+    fn find_leaf(&self, node: usize, key: usize) -> Option<usize> {
+        let mut i = 0;
+        while i < self.nodes[node].key_num {
+            if self.nodes[node].keys[i] > key {
+                break;
+            }
+            i += 1;
         }
-        self.nodes[self.nodes[curr].keys[curr] as usize].key_num - 1
+        if self.nodes[node].leaf {
+            for i in 0..self.nodes[node].key_num {
+                if self.nodes[node].keys[i] == key {
+                    return Some(node);
+                }
+            }
+            return None;
+        } else {
+            return self.find_leaf(self.nodes[node].child[i], key);
+        }
     }
 
-    fn find_key(&self, node: usize, key: usize) -> usize
-    {
-        let mut index = 0;
-        while index < self.nodes[node].key_num && key > self.nodes[node].keys[index] {
-            index += 1;
+    fn find(&self, key: usize) -> Option<usize> {
+        let mut i: usize = 0;
+
+        let maybe_node = self.find_leaf(self.root.unwrap(), key);
+        let node;
+        match maybe_node {
+            Some(x) => node = x,
+            None => return None
         }
-        index
+
+        while i < self.nodes[node].key_num && key != self.nodes[node].keys[i] {
+            i += 1;
+        }
+
+        if i == self.nodes[node].key_num {
+            return None;
+        } else {
+            return Some(self.nodes[node].pointers[i]);
+        }
     }
 
-    fn remove_from_leaf(mut self, node: usize, index: usize) -> BPlus
-    {
-        for i in index+1..self.nodes[node].key_num {
-            self.nodes[node].keys[i - 1] = self.nodes[node].keys[i];
+    fn split_child(mut self, parent: usize, child: usize, i: usize) -> BPlus {
+        let mut new_child = Self::create_new_node(self.nodes[child].leaf);
+        if new_child.leaf {
+            new_child.key_num = self.t;
+        } else {
+            new_child.key_num = self.t - 1;
         }
-        self.nodes[node].key_num -= 1;
+        
+        new_child.keys.resize(new_child.key_num , 0);
+        new_child.pointers.resize(new_child.key_num , 0);
+        new_child.child.resize(new_child.key_num + 1, 0);
+        
+        let mut not_leaf_const = 0;
+        if !new_child.leaf {
+            not_leaf_const = 1;
+        }
+
+        for j in 0..new_child.key_num {
+            new_child.keys[j] = self.nodes[child].keys[j + self.t + not_leaf_const];
+            if new_child.leaf {
+                new_child.pointers[j] = self.nodes[child].pointers[j + self.t + not_leaf_const];
+            }
+        }
+
+        if !self.nodes[child].leaf {
+            for j in 0..=new_child.key_num {
+                new_child.child[j] = self.nodes[child].child[j + self.t + not_leaf_const];
+            }
+        }
+        
+        self.nodes[child].key_num = self.t;
+
+        self.nodes[parent].child.push(0);
+
+        for j in self.nodes[parent].key_num..i {
+            self.nodes[parent].child[j + 1] = self.nodes[parent].child[j];
+        }
+
+        self.nodes.push(Box::new(new_child));
+        self.nodes[parent].child[i + 1] = self.nodes.len() - 1;
+        self.nodes[parent].keys.push(0);
+        if i != self.nodes[parent].key_num {
+            for j in self.nodes[parent].key_num-1..=i {
+                self.nodes[parent].keys[j + 1] = self.nodes[parent].keys[j];
+            }
+        }
+        self.nodes[parent].key_num += 1;
+        self.nodes[parent].keys[i] = self.nodes[child].keys[self.t];
+        let key_num = self.nodes[child].key_num;
+        self.nodes[child].keys.resize(key_num, 0);
+        self.nodes[child].pointers.resize(key_num, 0);
+        self.nodes[child].child.resize(key_num + 1, 0);
         self
     }
 
-    fn merge(mut self, node: usize, index: usize) -> BPlus
-    {
-        let child = self.nodes[node].child[index];
-        let sibling = self.nodes[node].child[index + 1];
-
-        let temp = self.nodes[child].key_num;
-        self.nodes[child].keys[temp] = self.nodes[node].keys[index];
-
-        if !self.nodes[child].leaf {
-            let temp = self.nodes[child].key_num + 1;
-            self.nodes[child].child[temp]
-                = self.nodes[sibling].child[0];
-        }
-
-        for i in 0..self.nodes[sibling].key_num {
-            let temp = i + self.nodes[child].key_num + 1;
-            self.nodes[child].keys[temp] = self.nodes[sibling].keys[i];
-        }
-        for i in 0..self.nodes[sibling].key_num {
-            let temp = i + self.nodes[child].key_num + 1;
-            self.nodes[child].keys[temp] = self.nodes[sibling].keys[i];
-        }
-
-        if !self.nodes[child].leaf {
-            for i in 0..self.nodes[sibling].key_num + 1 {
-                let temp = i + self.nodes[child].key_num + 1;
-                self.nodes[child].child[temp] = self.nodes[sibling].child[i];
+    fn insert_helper(mut self, node: usize, key: usize, value: usize) -> BPlus {
+        let mut i = 0;
+        while i < self.nodes[node].key_num {
+            if self.nodes[node].keys[i] > key {
+                break;
             }
+            i += 1;
         }
-
-        for i in index+1..self.nodes[node].key_num {
-            self.nodes[node].keys[i - 1] = self.nodes[node].keys[i];
-        }
-
-        for i in index+2..self.nodes[node].key_num+1 {
-            self.nodes[node].child[i - 1] = self.nodes[node].child[i];
-        }
-
-        self.nodes[child].key_num += self.nodes[sibling].key_num + 1;
-        self.nodes[node].key_num -= 1;
-        self
-    }
-
-    fn fill(self, node: usize, index: usize) -> BPlus
-    {
-        if index != 0 && self.nodes[self.nodes[node].child[index - 1]].key_num >= self.t {
-            Self::borrow_from_prev(self, node, index)
-        }
-        else if index != self.nodes[node].key_num && self.nodes[self.nodes[node].child[index + 1]].key_num >= self.t {
-            Self::borrow_from_next(self, node, index)
-        }
-        else {
-            if index != self.nodes[node].key_num {
-                Self::merge(self, node, index)
-            }
-            else {
-                Self::merge(self, node, index - 1)
-            }
-        }
-    }
-
-    fn delete_key_helper(mut self, node: usize, key: usize) -> BPlus
-    {
-        let index = Self::find_key(&self, node, key);
-
-        if index < self.nodes[node].key_num && self.nodes[node].keys[index] == key {
-            if self.nodes[node].leaf {
-                return Self::remove_from_leaf(self, node, index);
-            }
-            else {
-                let predecessor = Self::get_predecessor(&self, node, index);
-                self.nodes[node].keys[index] = predecessor;
-                let temp = self.nodes[node].child[index];
-                return Self::delete_key_helper(self, temp, predecessor);
+        if !self.nodes[node].leaf {
+            let temp = self.nodes[node].child[i];
+            self = self.insert_helper(temp, key, value);
+            if self.nodes[temp].key_num == 2 * self.t {
+                self = self.split_child(node, temp, i);
             }
         } else {
-            if self.nodes[node].leaf {
-                return self;
+            self.nodes[node].keys.push(0);
+            self.nodes[node].pointers.push(0);
+            if self.nodes[node].key_num as i32 - 1 >= i as i32  {
+                for j in self.nodes[node].key_num - 1..=i {
+                    self.nodes[node].keys[j + 1] = self.nodes[node].keys[j];
+                    self.nodes[node].pointers[j + 1] = self.nodes[node].pointers[j];
+                }
             }
 
-            let is_last_child = index == self.nodes[node].key_num;
-
-            if self.nodes[self.nodes[node].child[index]].key_num < self.t {
-                self = Self::fill(self, node, index);
-            }
-            let n = self.nodes[node].key_num;
-            if is_last_child && index > n {
-                let temp = self.nodes[node].child[index - 1];
-                return Self::delete_key_helper(self, temp, key);
-            }
-            else {
-                let temp = self.nodes[node].child[index];
-                return Self::delete_key_helper(self, temp, key);
-            }
-        }
-    }
-
-    fn delete_key(mut self, key: usize)
-    {
-        let root = self.root.unwrap();
-        self = Self::delete_key_helper(self, root, key);
-        if self.nodes[root].key_num == 0 && !self.nodes[root].leaf {
-            let new_root = self.nodes[root].child[0];
-            self.root = Some(new_root);
-        }
-    }
-
-    fn borrow_from_prev(mut self, node: usize, index: usize) -> BPlus {   
-        let child = self.nodes[node].child[index];
-        let sibling = self.nodes[node].child[index - 1];
-        for i in self.nodes[child].key_num - 1..=0 {
-            self.nodes[child].keys[i + 1] = self.nodes[child].keys[i];
+            self.nodes[node].keys[i] = key;
+            self.nodes[node].pointers[i] = value;
+            self.nodes[node].key_num += 1;
         }
 
-        if !self.nodes[child].leaf {
-            for i in self.nodes[child].key_num..=0 {
-                self.nodes[child].child[i + 1] = self.nodes[child].child[i];
-            }
-        }
-
-        self.nodes[child].keys[0] = self.nodes[node].keys[index - 1];
-
-        if !self.nodes[child].leaf {
-            self.nodes[child].child[0] = self.nodes[sibling].child[self.nodes[sibling].key_num];
-        }
-
-        self.nodes[node].keys[index - 1] = self.nodes[sibling].keys[self.nodes[sibling].key_num - 1];
-
-        self.nodes[child].key_num += 1;
-        self.nodes[sibling].key_num -= 1;
         self
     }
 
-    #[allow(dead_code)]
-    fn borrow_from_next(mut self, node: usize, index: usize) -> BPlus
-    {
-        let child = self.nodes[node].child[index];
-        let sibling = self.nodes[node].child[index + 1];
-
-        let temp = self.nodes[child].key_num;
-        self.nodes[child].keys[temp] = self.nodes[node].keys[index];
-
-        if !self.nodes[child].leaf {
-            let temp = self.nodes[child].key_num + 1;
-            self.nodes[child].child[temp]
-                = self.nodes[sibling].child[0];
+    fn insert(mut self, key: usize, value: usize) -> BPlus {
+        let root = self.root.unwrap();
+        self = self.insert_helper(root, key, value);
+        if self.nodes[root].key_num == 2 * self.t {
+            let mut new_root = Self::create_new_node(false);
+            new_root.child.push(root);
+            self.nodes.push(Box::new(new_root));
+            let new_root= self.nodes.len() - 1;
+            self = Self::split_child(self, new_root, root, 0);
+            self.root = Some(new_root);
         }
 
-        self.nodes[node].keys[index] = self.nodes[sibling].keys[0];
+        self
+    }
 
-        for i in 1..self.nodes[sibling].key_num {
-            self.nodes[sibling].keys[i - 1] = self.nodes[sibling].keys[i];
+    fn print_subtree(&self, node: usize) {
+        for i in 0..self.nodes[node].key_num {
+            if self.nodes[node].leaf {
+                print!("L");
+            }
+            print!("{} ", self.nodes[node].keys[i]);
         }
 
-        if !self.nodes[sibling].leaf {
-            for i in 1..=self.nodes[sibling].key_num {
-                self.nodes[sibling].child[i - 1] = self.nodes[sibling].child[i];
+        println!();
+
+        if !self.nodes[node].leaf {
+            for i in 0..=self.nodes[node].key_num {
+                self.print_subtree(self.nodes[node].child[i]);
+            }
+        }
+    }
+
+    fn delete(mut self, key: usize) -> BPlus {
+        let root = self.root.unwrap();
+        self = self.delete_helper(root, key);
+        if self.nodes[root].key_num == 0 && !self.nodes[root].leaf {
+            self.root = Some(self.nodes[root].child[0]);
+        }
+
+        self
+    }
+
+    fn delete_helper(mut self, node: usize, key: usize) -> BPlus {
+        let mut i = 0;
+
+        if self.nodes[node].leaf {
+            while i < self.nodes[node].key_num {
+                if self.nodes[node].keys[i] == key {
+                    break;
+                }
+                i += 1;
+            }
+            if i != self.nodes[node].key_num {
+                self.nodes[node].key_num -= 1;
+                let key_num = self.nodes[node].key_num;
+                for j in i..key_num {
+                    self.nodes[node].keys[j] = self.nodes[node].keys[j + 1];
+                    self.nodes[node].pointers[j] = self.nodes[node].pointers[j + 1];
+                }
+                self.nodes[node].keys.resize(key_num, 0);
+                self.nodes[node].pointers.resize(key_num, 0);
+            }
+        } else {
+            while i < self.nodes[node].key_num {
+                if self.nodes[node].keys[i] > key {
+                    break;
+                }
+                i += 1;
+            }
+            let temp = self.nodes[node].child[i];
+            self = self.delete_helper(temp, key);
+            if self.nodes[temp].key_num == self.t - 2 {
+                if i != 0 {
+                    if self.nodes[self.nodes[node].child[i - 1]].key_num == self.t - 1 {
+                        let temp1 = self.nodes[node].child[i - 1];
+                        let temp2 = self.nodes[node].child[i];
+                        self = self.merge(temp1, temp2);
+                        self.nodes[node].key_num -= 1;
+                        let key_num = self.nodes[node].key_num;
+                        for j in i..key_num{
+                            self.nodes[node].keys[j] = self.nodes[node].keys[j + 1];
+                            self.nodes[node].keys[j] = self.nodes[node].keys[j + 1];
+                        }
+                        self.nodes[node].keys.resize(key_num, 0);
+                    } else {
+                        let prev_child = self.nodes[node].child[i - 1];
+                        let child = self.nodes[node].child[i];
+                        let moved_key = self.nodes[prev_child].keys[self.nodes[prev_child].key_num - 1];
+                        let moved_value = self.nodes[prev_child].pointers[self.nodes[prev_child].key_num - 1];
+                        self = self.insert_helper(child, moved_key, moved_value);
+                        self = self.delete_helper(prev_child, moved_key);
+                        self.nodes[node].keys[i - 1] = self.nodes[child].keys[0];
+                    }
+                } else {
+                    if self.nodes[self.nodes[node].child[i + 1]].key_num == self.t - 1 {
+                        let temp1 = self.nodes[node].child[i + 1];
+                        let temp2 = self.nodes[node].child[i];
+                        self = self.merge(temp2, temp1);
+                        self.nodes[node].key_num -= 1;
+                        let key_num = self.nodes[node].key_num;
+                        for j in 0..key_num{
+                            self.nodes[node].keys[j] = self.nodes[node].keys[j + 1];
+                            self.nodes[node].keys[j] = self.nodes[node].keys[j + 1];
+                        }
+                        self.nodes[node].keys.resize(key_num, 0);
+                    } else {
+                        let prev_child = self.nodes[node].child[i + 1];
+                        let child = self.nodes[node].child[i];
+                        let moved_key = self.nodes[prev_child].keys[0];
+                        let moved_value = self.nodes[prev_child].pointers[0];
+                        self = self.insert_helper(child, moved_key, moved_value);
+                        self = self.delete_helper(prev_child, moved_key);
+                        self.nodes[node].keys[i] = self.nodes[prev_child].keys[0];
+                    }
+                }
+
+                if self.nodes[temp].key_num == 0 {
+                    self.nodes[node].child[i] = self.nodes[temp].child[0];
+                }
+            }
+        }
+        self
+    }
+
+    fn merge(mut self, node1: usize, node2: usize) -> BPlus {
+        let new_key_num = self.nodes[node1].key_num + self.nodes[node2].key_num;
+        
+        self.nodes[node1].keys.resize(new_key_num, 0);
+        if self.nodes[node1].leaf {
+            self.nodes[node1].pointers.resize(new_key_num, 0);
+        } else {
+            self.nodes[node1].child.resize(new_key_num + 2, 0);
+        }
+        for i in 0..self.nodes[node2].key_num {
+            let temp = self.nodes[node1].key_num;
+            self.nodes[node1].keys[temp + i] = self.nodes[node2].keys[i];
+            if self.nodes[node1].leaf {
+                self.nodes[node1].pointers[temp] = self.nodes[node2].pointers[i];
+            } else {
+                self.nodes[node1].child[temp + i + 1] = self.nodes[node2].child[i];
             }
         }
 
-        self.nodes[child].key_num += 1;
-        self.nodes[sibling].key_num -= 1;
+        if !self.nodes[node1].leaf {
+            self.nodes[node1].child[new_key_num + 1] = self.nodes[node2].child[self.nodes[node2].key_num];
+        }
+
         self
     }
 }
 
 #[cfg(test)]
 mod tests {
-    // Note this useful idiom: importing names from outer (for mod tests) scope.
     use super::*;
 
     #[test]
     fn test_insert_and_find() {
-        let mut tree: BPlus = BPlus::new(2);
+        let mut tree: BPlus = BPlus::new(4);
         tree = tree.insert(1, 1);
-        tree = tree.insert(2, 1);
-        tree = tree.insert(3, 2);
         assert_eq!(tree.find(1), Some(1));
-        assert_eq!(tree.find(2), Some(1));
-        assert_eq!(tree.find(3), Some(2));
+    }
+
+    #[test]
+    fn test_insert_and_find_bunch_of_elements() {
+        let mut tree: BPlus = BPlus::new(2);
+        for i in 1..100 {
+            tree = tree.insert(i, i);
+        }
+        
+        for i in 1..100 {
+            assert_eq!(tree.find(i), Some(i));
+        }
+    }
+
+    #[test]
+    fn test_insert_and_delete() {
+        let mut tree: BPlus = BPlus::new(4);
+        tree = tree.insert(1, 1);
+        tree = tree.delete(1);
+        assert!(tree.find(1).is_none());
+    }
+
+    #[test]
+    fn test_insert_and_delete_bunch_of_elements() {
+        let mut tree: BPlus = BPlus::new(2);
+        for i in 1..100 {
+            tree = tree.insert(i, i);
+        }
+
+        for i in 20..=30 {
+            tree = tree.delete(i);
+        }
+        
+        for i in 1..20 {
+            assert_eq!(tree.find(i).unwrap(), i);
+        }
+        for i in 20..=30 {
+            assert!(tree.find(i).is_none());
+        }
+        for i in 31..100 {
+            assert_eq!(tree.find(i).unwrap(), i);
+        }
     }
 }
