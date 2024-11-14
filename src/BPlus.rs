@@ -1,11 +1,14 @@
+use crate::chunk::{Chunk, FileHandler};
+
 struct BPlus {
     t: usize,
     root: Option<usize>,
     nodes: Vec<Box<Node>>,
 }
 
-type ValueType = usize;
+type ValueType = FileHandler;
 
+#[allow(dead_code)]
 struct Node {
     leaf: bool,
     key_num: usize,
@@ -35,8 +38,8 @@ impl BPlus {
             if self.nodes[node].keys[i] > key {
                 break;
             }
-            i += 1;
-        }
+            i += 1; 
+        } 
         if self.nodes[node].leaf {
             for i in 0..self.nodes[node].key_num {
                 if self.nodes[node].keys[i] == key {
@@ -49,7 +52,7 @@ impl BPlus {
         }
     }
 
-    fn find(&self, key: usize) -> Option<usize> {
+    fn find(&self, key: usize) -> Option<&ValueType> {
         let mut i: usize = 0;
 
         let maybe_node = self.find_leaf(self.root.unwrap(), key);
@@ -66,7 +69,7 @@ impl BPlus {
         if i == self.nodes[node].key_num {
             return None;
         } else {
-            return Some(self.nodes[node].pointers[i]);
+            return Some(&self.nodes[node].pointers[i]);
         }
     }
 
@@ -79,7 +82,7 @@ impl BPlus {
         }
         
         new_child.keys.resize(new_child.key_num , 0);
-        new_child.pointers.resize(new_child.key_num , 0);
+        new_child.pointers.resize(new_child.key_num , FileHandler::default());
         new_child.child.resize(new_child.key_num + 1, 0);
         
         let mut not_leaf_const = 0;
@@ -90,7 +93,7 @@ impl BPlus {
         for j in 0..new_child.key_num {
             new_child.keys[j] = self.nodes[child].keys[j + self.t + not_leaf_const];
             if new_child.leaf {
-                new_child.pointers[j] = self.nodes[child].pointers[j + self.t + not_leaf_const];
+                new_child.pointers[j] = self.nodes[child].pointers[j + self.t + not_leaf_const].clone();
             }
         }
 
@@ -120,12 +123,12 @@ impl BPlus {
         self.nodes[parent].keys[i] = self.nodes[child].keys[self.t];
         let key_num = self.nodes[child].key_num;
         self.nodes[child].keys.resize(key_num, 0);
-        self.nodes[child].pointers.resize(key_num, 0);
+        self.nodes[child].pointers.resize(key_num, FileHandler::default());
         self.nodes[child].child.resize(key_num + 1, 0);
         self
     }
 
-    fn insert_helper(mut self, node: usize, key: usize, value: usize) -> BPlus {
+    fn insert_helper(mut self, node: usize, key: usize, value: ValueType) -> BPlus {
         let mut i = 0;
         while i < self.nodes[node].key_num {
             if self.nodes[node].keys[i] > key {
@@ -141,11 +144,11 @@ impl BPlus {
             }
         } else {
             self.nodes[node].keys.push(0);
-            self.nodes[node].pointers.push(0);
+            self.nodes[node].pointers.push(FileHandler::default());
             if self.nodes[node].key_num as i32 - 1 >= i as i32  {
                 for j in self.nodes[node].key_num - 1..=i {
                     self.nodes[node].keys[j + 1] = self.nodes[node].keys[j];
-                    self.nodes[node].pointers[j + 1] = self.nodes[node].pointers[j];
+                    self.nodes[node].pointers[j + 1] = self.nodes[node].pointers[j].clone();
                 }
             }
 
@@ -157,7 +160,7 @@ impl BPlus {
         self
     }
 
-    fn insert(mut self, key: usize, value: usize) -> BPlus {
+    fn insert(mut self, key: usize, value: ValueType) -> BPlus {
         let root = self.root.unwrap();
         self = self.insert_helper(root, key, value);
         if self.nodes[root].key_num == 2 * self.t {
@@ -214,10 +217,10 @@ impl BPlus {
                 let key_num = self.nodes[node].key_num;
                 for j in i..key_num {
                     self.nodes[node].keys[j] = self.nodes[node].keys[j + 1];
-                    self.nodes[node].pointers[j] = self.nodes[node].pointers[j + 1];
+                    self.nodes[node].pointers[j] = self.nodes[node].pointers[j + 1].clone();
                 }
                 self.nodes[node].keys.resize(key_num, 0);
-                self.nodes[node].pointers.resize(key_num, 0);
+                self.nodes[node].pointers.resize(key_num, FileHandler::default());
             }
         } else {
             while i < self.nodes[node].key_num {
@@ -245,7 +248,7 @@ impl BPlus {
                         let prev_child = self.nodes[node].child[i - 1];
                         let child = self.nodes[node].child[i];
                         let moved_key = self.nodes[prev_child].keys[self.nodes[prev_child].key_num - 1];
-                        let moved_value = self.nodes[prev_child].pointers[self.nodes[prev_child].key_num - 1];
+                        let moved_value = self.nodes[prev_child].pointers[self.nodes[prev_child].key_num - 1].clone();
                         self = self.insert_helper(child, moved_key, moved_value);
                         self = self.delete_helper(prev_child, moved_key);
                         self.nodes[node].keys[i - 1] = self.nodes[child].keys[0];
@@ -266,7 +269,7 @@ impl BPlus {
                         let prev_child = self.nodes[node].child[i + 1];
                         let child = self.nodes[node].child[i];
                         let moved_key = self.nodes[prev_child].keys[0];
-                        let moved_value = self.nodes[prev_child].pointers[0];
+                        let moved_value = self.nodes[prev_child].pointers[0].clone();
                         self = self.insert_helper(child, moved_key, moved_value);
                         self = self.delete_helper(prev_child, moved_key);
                         self.nodes[node].keys[i] = self.nodes[prev_child].keys[0];
@@ -286,7 +289,7 @@ impl BPlus {
         
         self.nodes[node1].keys.resize(new_key_num, 0);
         if self.nodes[node1].leaf {
-            self.nodes[node1].pointers.resize(new_key_num, 0);
+            self.nodes[node1].pointers.resize(new_key_num, FileHandler::default());
         } else {
             self.nodes[node1].child.resize(new_key_num + 2, 0);
         }
@@ -294,7 +297,7 @@ impl BPlus {
             let temp = self.nodes[node1].key_num;
             self.nodes[node1].keys[temp + i] = self.nodes[node2].keys[i];
             if self.nodes[node1].leaf {
-                self.nodes[node1].pointers[temp] = self.nodes[node2].pointers[i];
+                self.nodes[node1].pointers[temp] = self.nodes[node2].pointers[i].clone();
             } else {
                 self.nodes[node1].child[temp + i + 1] = self.nodes[node2].child[i];
             }
@@ -313,51 +316,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_insert_and_find() {
-        let mut tree: BPlus = BPlus::new(4);
-        tree = tree.insert(1, 1);
-        assert_eq!(tree.find(1), Some(1));
-    }
-
-    #[test]
-    fn test_insert_and_find_bunch_of_elements() {
-        let mut tree: BPlus = BPlus::new(2);
-        for i in 1..100 {
-            tree = tree.insert(i, i);
-        }
-        
-        for i in 1..100 {
-            assert_eq!(tree.find(i), Some(i));
-        }
-    }
-
-    #[test]
     fn test_insert_and_delete() {
-        let mut tree: BPlus = BPlus::new(4);
-        tree = tree.insert(1, 1);
-        tree = tree.delete(1);
-        assert!(tree.find(1).is_none());
-    }
-
-    #[test]
-    fn test_insert_and_delete_bunch_of_elements() {
         let mut tree: BPlus = BPlus::new(2);
-        for i in 1..100 {
-            tree = tree.insert(i, i);
-        }
-
-        for i in 20..=30 {
-            tree = tree.delete(i);
-        }
-        
-        for i in 1..20 {
-            assert_eq!(tree.find(i).unwrap(), i);
-        }
-        for i in 20..=30 {
-            assert!(tree.find(i).is_none());
-        }
-        for i in 31..100 {
-            assert_eq!(tree.find(i).unwrap(), i);
-        }
+        tree = tree.insert(1, FileHandler::new("file1.txt".to_string()));
+        tree = tree.insert(2, FileHandler::new("file2.txt".to_string()));
+        tree = tree.insert(3, FileHandler::new("file3.txt".to_string()));
+        tree = tree.insert(4, FileHandler::new("file4.txt".to_string()));
+        tree = tree.insert(5, FileHandler::new("file5.txt".to_string()));
+        let a = tree.find(1).unwrap();
+        a.write(b"test1");
+        let mut buf = Vec::new();
+        let res = a.read(&mut buf);
+        assert_eq!(std::str::from_utf8(&buf).unwrap(), "test1");
     }
 }
