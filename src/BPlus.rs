@@ -1,22 +1,21 @@
-use crate::chunk::{Chunk, FileHandler};
+use crate::chunk::FileHandler;
 
 struct BPlus {
     t: usize,
-    root: Option<usize>,
-    nodes: Vec<Box<Node>>,
+    root: Option<Box<Node>>,
 }
 
 type ValueType = FileHandler;
-
+#[derive(Clone)]
 #[allow(dead_code)]
 struct Node {
     leaf: bool,
     key_num: usize,
     keys: Vec<usize>,
-    child: Vec<usize>,
-    pointers: Vec<ValueType>,
-    left: Option<usize>,
-    right: Option<usize>,
+    children: Vec<Option<Box<Node>>>,
+    pointers: Vec<ValueType>
+    /*left: Option<usize>,
+    right: Option<usize>,*/
 }
 #[allow(dead_code)]
 impl BPlus {
@@ -24,287 +23,289 @@ impl BPlus {
         let root = Self::create_new_node(true);
         let mut nodes: Vec<Box<Node>> = Vec::new();
         nodes.push(Box::new(root));
-        Self {t, root: Some(0), nodes: nodes}
+        Self {t, root: Some(Box::new(Self::create_new_node(true)))}
     }
 
     fn create_new_node(leaf: bool) -> Node {
-        let new_node = Node{leaf : leaf, key_num: 0, keys: Vec::new(), child: Vec::new(), pointers: Vec::new(), left: None, right: None};
+        let new_node = Node{leaf : leaf, key_num: 0, keys: Vec::new(), children: Vec::new(), pointers: Vec::new()};
         new_node
     }
 
-    fn find_leaf(&self, node: usize, key: usize) -> Option<usize> {
+    fn find_leaf<'a>(&self, node: &'a Box<Node>, key: usize) -> Option<&'a Box<Node>> {
         let mut i = 0;
-        while i < self.nodes[node].key_num {
-            if self.nodes[node].keys[i] > key {
+        while i < node.key_num {
+            if node.keys[i] > key {
                 break;
             }
             i += 1; 
         } 
-        if self.nodes[node].leaf {
-            for i in 0..self.nodes[node].key_num {
-                if self.nodes[node].keys[i] == key {
+        if node.leaf {
+            for i in 0..node.key_num {
+                if node.keys[i] == key {
                     return Some(node);
                 }
             }
             return None;
         } else {
-            return self.find_leaf(self.nodes[node].child[i], key);
+            return self.find_leaf(node.children[i].as_ref().unwrap(), key);
         }
     }
 
     fn find(&self, key: usize) -> Option<&ValueType> {
         let mut i: usize = 0;
-
-        let maybe_node = self.find_leaf(self.root.unwrap(), key);
+        let maybe_node = self.find_leaf(self.root.as_ref().unwrap(), key);
+        
         let node;
         match maybe_node {
             Some(x) => node = x,
             None => return None
         }
 
-        while i < self.nodes[node].key_num && key != self.nodes[node].keys[i] {
+        while i < node.key_num && key != node.keys[i] {
             i += 1;
         }
 
-        if i == self.nodes[node].key_num {
+        if i == node.key_num {
             return None;
         } else {
-            return Some(&self.nodes[node].pointers[i]);
+            return Some(&node.pointers[i]);
         }
     }
 
-    fn split_child(mut self, parent: usize, child: usize, i: usize) -> BPlus {
-        let mut new_child = Self::create_new_node(self.nodes[child].leaf);
-        if new_child.leaf {
-            new_child.key_num = self.t;
+    fn split_children(self, parent: &mut Box<Node>, i: usize) -> BPlus {
+        parent.children.push(None);
+        let mut children = parent.children.swap_remove(i).unwrap().clone();
+        let mut new_children = Self::create_new_node(children.leaf);
+        if new_children.leaf {
+            new_children.key_num = self.t;
         } else {
-            new_child.key_num = self.t - 1;
+            new_children.key_num = self.t - 1;
         }
         
-        new_child.keys.resize(new_child.key_num , 0);
-        new_child.pointers.resize(new_child.key_num , FileHandler::default());
-        new_child.child.resize(new_child.key_num + 1, 0);
+        new_children.keys.resize(new_children.key_num , 0);
+        new_children.pointers.resize(new_children.key_num , FileHandler::default());
+        new_children.children.resize(new_children.key_num + 1, None);
         
         let mut not_leaf_const = 0;
-        if !new_child.leaf {
+        if !new_children.leaf {
             not_leaf_const = 1;
         }
 
-        for j in 0..new_child.key_num {
-            new_child.keys[j] = self.nodes[child].keys[j + self.t + not_leaf_const];
-            if new_child.leaf {
-                new_child.pointers[j] = self.nodes[child].pointers[j + self.t + not_leaf_const].clone();
+        for j in 0..new_children.key_num {
+            new_children.keys[j] = children.keys[j + self.t + not_leaf_const];
+            if new_children.leaf {
+                new_children.pointers[j] = children.pointers[j + self.t + not_leaf_const].clone();
             }
         }
 
-        if !self.nodes[child].leaf {
-            for j in 0..=new_child.key_num {
-                new_child.child[j] = self.nodes[child].child[j + self.t + not_leaf_const];
+        if !children.leaf {
+            for j in 0..=new_children.key_num {
+                new_children.children.push(None);
+                new_children.children[j] = children.children.swap_remove(j + self.t + not_leaf_const);
             }
         }
         
-        self.nodes[child].key_num = self.t;
+        children.key_num = self.t;
 
-        self.nodes[parent].child.push(0);
+        parent.children.push(None);
 
-        for j in self.nodes[parent].key_num..i {
-            self.nodes[parent].child[j + 1] = self.nodes[parent].child[j];
+        for j in parent.key_num..i {
+            parent.children.push(None);
+            parent.children[j + 1] = parent.children.swap_remove(j);
         }
 
-        self.nodes.push(Box::new(new_child));
-        self.nodes[parent].child[i + 1] = self.nodes.len() - 1;
-        self.nodes[parent].keys.push(0);
-        if i != self.nodes[parent].key_num {
-            for j in self.nodes[parent].key_num-1..=i {
-                self.nodes[parent].keys[j + 1] = self.nodes[parent].keys[j];
+        parent.children[i + 1] = Some(Box::new(new_children));
+        parent.keys.push(0);
+        if i != parent.key_num {
+            for j in parent.key_num-1..=i {
+                parent.keys[j + 1] = parent.keys[j];
             }
         }
-        self.nodes[parent].key_num += 1;
-        self.nodes[parent].keys[i] = self.nodes[child].keys[self.t];
-        let key_num = self.nodes[child].key_num;
-        self.nodes[child].keys.resize(key_num, 0);
-        self.nodes[child].pointers.resize(key_num, FileHandler::default());
-        self.nodes[child].child.resize(key_num + 1, 0);
+        parent.key_num += 1;
+        parent.keys[i] = children.keys[self.t];
+        let key_num = children.key_num;
+        children.keys.resize(key_num, 0);
+        children.pointers.resize(key_num, FileHandler::default());
+        children.children.resize(key_num + 1, None);
+        parent.children[i] = Some(children);
         self
     }
 
-    fn insert_helper(mut self, node: usize, key: usize, value: ValueType) -> BPlus {
+    fn insert_helper(mut self, node: &mut Box<Node>, key: usize, value: ValueType) -> BPlus {
         let mut i = 0;
-        while i < self.nodes[node].key_num {
-            if self.nodes[node].keys[i] > key {
+        while i < node.key_num {
+            if node.keys[i] > key {
                 break;
             }
             i += 1;
         }
-        if !self.nodes[node].leaf {
-            let temp = self.nodes[node].child[i];
-            self = self.insert_helper(temp, key, value);
-            if self.nodes[temp].key_num == 2 * self.t {
-                self = self.split_child(node, temp, i);
+        if !node.leaf {
+            let key_num;
+            {
+                let temp = node.children[i].as_mut().unwrap();
+                self = self.insert_helper(temp, key, value);
+                key_num = temp.key_num;
+            }
+            
+            if key_num == 2 * self.t {
+                self = self.split_children(node, i);
             }
         } else {
-            self.nodes[node].keys.push(0);
-            self.nodes[node].pointers.push(FileHandler::default());
-            if self.nodes[node].key_num as i32 - 1 >= i as i32  {
-                for j in self.nodes[node].key_num - 1..=i {
-                    self.nodes[node].keys[j + 1] = self.nodes[node].keys[j];
-                    self.nodes[node].pointers[j + 1] = self.nodes[node].pointers[j].clone();
+            node.keys.push(0);
+            node.pointers.push(FileHandler::default());
+            if node.key_num as i32 - 1 >= i as i32  {
+                for j in node.key_num - 1..=i {
+                    node.keys[j + 1] = node.keys[j];
+                    node.pointers[j + 1] = node.pointers[j].clone();
                 }
             }
 
-            self.nodes[node].keys[i] = key;
-            self.nodes[node].pointers[i] = value;
-            self.nodes[node].key_num += 1;
+            node.keys[i] = key;
+            node.pointers[i] = value;
+            node.key_num += 1;
         }
 
         self
     }
 
     fn insert(mut self, key: usize, value: ValueType) -> BPlus {
-        let root = self.root.unwrap();
-        self = self.insert_helper(root, key, value);
-        if self.nodes[root].key_num == 2 * self.t {
+        let mut root = self.root.clone().unwrap();
+        self = self.insert_helper(&mut root, key, value);
+        if root.key_num == 2 * self.t {
             let mut new_root = Self::create_new_node(false);
-            new_root.child.push(root);
-            self.nodes.push(Box::new(new_root));
-            let new_root= self.nodes.len() - 1;
-            self = Self::split_child(self, new_root, root, 0);
+            new_root.children.push(Some(root.clone()));
+            let mut new_root = Box::new(new_root);
+            self = Self::split_children(self, &mut new_root, 0);
             self.root = Some(new_root);
         }
 
+        self.root = Some(root);
         self
-    }
-
-    fn print_subtree(&self, node: usize) {
-        for i in 0..self.nodes[node].key_num {
-            if self.nodes[node].leaf {
-                print!("L");
-            }
-            print!("{} ", self.nodes[node].keys[i]);
-        }
-
-        println!();
-
-        if !self.nodes[node].leaf {
-            for i in 0..=self.nodes[node].key_num {
-                self.print_subtree(self.nodes[node].child[i]);
-            }
-        }
     }
 
     fn delete(mut self, key: usize) -> BPlus {
-        let root = self.root.unwrap();
-        self = self.delete_helper(root, key);
-        if self.nodes[root].key_num == 0 && !self.nodes[root].leaf {
-            self.root = Some(self.nodes[root].child[0]);
+        let mut root = self.root.clone().unwrap();
+        self = self.delete_helper(&mut root, key);
+        if root.key_num == 0 && !root.leaf {
+            let temp = root.children[0].clone();
+            self.root = Some(temp.unwrap());
         }
 
+        self.root = Some(root);
         self
     }
 
-    fn delete_helper(mut self, node: usize, key: usize) -> BPlus {
+    fn delete_helper(mut self, node: &mut Box<Node>, key: usize) -> BPlus {
         let mut i = 0;
 
-        if self.nodes[node].leaf {
-            while i < self.nodes[node].key_num {
-                if self.nodes[node].keys[i] == key {
+        if node.leaf {
+            while i < node.key_num {
+                if node.keys[i] == key {
                     break;
                 }
                 i += 1;
             }
-            if i != self.nodes[node].key_num {
-                self.nodes[node].key_num -= 1;
-                let key_num = self.nodes[node].key_num;
+            if i != node.key_num {
+                node.key_num -= 1;
+                let key_num = node.key_num;
                 for j in i..key_num {
-                    self.nodes[node].keys[j] = self.nodes[node].keys[j + 1];
-                    self.nodes[node].pointers[j] = self.nodes[node].pointers[j + 1].clone();
+                    node.keys[j] = node.keys[j + 1];
+                    node.pointers[j] = node.pointers[j + 1].clone();
                 }
-                self.nodes[node].keys.resize(key_num, 0);
-                self.nodes[node].pointers.resize(key_num, FileHandler::default());
+                node.keys.resize(key_num, 0);
+                node.pointers.resize(key_num, FileHandler::default());
             }
         } else {
-            while i < self.nodes[node].key_num {
-                if self.nodes[node].keys[i] > key {
+            while i < node.key_num {
+                if node.keys[i] > key {
                     break;
                 }
                 i += 1;
             }
-            let temp = self.nodes[node].child[i];
-            self = self.delete_helper(temp, key);
-            if self.nodes[temp].key_num == self.t - 2 {
+            node.children.push(None);
+            let mut temp = node.children.swap_remove(i).unwrap();
+            self = self.delete_helper(&mut temp, key);
+            if temp.key_num == self.t - 2 {
                 if i != 0 {
-                    if self.nodes[self.nodes[node].child[i - 1]].key_num == self.t - 1 {
-                        let temp1 = self.nodes[node].child[i - 1];
-                        let temp2 = self.nodes[node].child[i];
-                        self = self.merge(temp1, temp2);
-                        self.nodes[node].key_num -= 1;
-                        let key_num = self.nodes[node].key_num;
+                    if node.children[i - 1].as_ref().unwrap().key_num == self.t - 1 {
+                        node.children.push(None);
+
+                        let mut temp1 = node.children.swap_remove(i - 1).unwrap();
+                        self = self.merge(&mut temp1, &mut  temp);
+                        node.key_num -= 1;
+                        let key_num = node.key_num;
                         for j in i..key_num{
-                            self.nodes[node].keys[j] = self.nodes[node].keys[j + 1];
-                            self.nodes[node].keys[j] = self.nodes[node].keys[j + 1];
+                            node.keys[j] = node.keys[j + 1];
+                            node.keys[j] = node.keys[j + 1];
                         }
-                        self.nodes[node].keys.resize(key_num, 0);
+                        node.keys.resize(key_num, 0);
+                        node.children[i - 1] = Some(temp1);
                     } else {
-                        let prev_child = self.nodes[node].child[i - 1];
-                        let child = self.nodes[node].child[i];
-                        let moved_key = self.nodes[prev_child].keys[self.nodes[prev_child].key_num - 1];
-                        let moved_value = self.nodes[prev_child].pointers[self.nodes[prev_child].key_num - 1].clone();
-                        self = self.insert_helper(child, moved_key, moved_value);
-                        self = self.delete_helper(prev_child, moved_key);
-                        self.nodes[node].keys[i - 1] = self.nodes[child].keys[0];
+                        node.children.push(None);
+                        let mut prev_children = node.children.swap_remove(i - 1).unwrap();
+                        let moved_key = prev_children.keys[prev_children.key_num - 1];
+                        let moved_value = prev_children.pointers[prev_children.key_num - 1].clone();
+                        self = self.insert_helper(&mut temp, moved_key, moved_value);
+                        self = self.delete_helper(&mut prev_children, moved_key);
+                        node.keys[i - 1] = temp.keys[0];
+                        node.children[i - 1] = Some(prev_children);
                     }
                 } else {
-                    if self.nodes[self.nodes[node].child[i + 1]].key_num == self.t - 1 {
-                        let temp1 = self.nodes[node].child[i + 1];
-                        let temp2 = self.nodes[node].child[i];
-                        self = self.merge(temp2, temp1);
-                        self.nodes[node].key_num -= 1;
-                        let key_num = self.nodes[node].key_num;
+                    if node.children[i + 1].as_ref().unwrap().key_num == self.t - 1 {
+                        node.children.push(None);
+                        let mut temp1 = node.children.swap_remove(i + 1).unwrap();
+                        self = self.merge(&mut temp, &mut temp1);
+                        node.key_num -= 1;
+                        let key_num = node.key_num;
                         for j in 0..key_num{
-                            self.nodes[node].keys[j] = self.nodes[node].keys[j + 1];
-                            self.nodes[node].keys[j] = self.nodes[node].keys[j + 1];
+                            node.keys[j] = node.keys[j + 1];
+                            node.keys[j] = node.keys[j + 1];
                         }
-                        self.nodes[node].keys.resize(key_num, 0);
+                        node.keys.resize(key_num, 0);
+                        node.children[i + 1] = Some(temp1);
                     } else {
-                        let prev_child = self.nodes[node].child[i + 1];
-                        let child = self.nodes[node].child[i];
-                        let moved_key = self.nodes[prev_child].keys[0];
-                        let moved_value = self.nodes[prev_child].pointers[0].clone();
-                        self = self.insert_helper(child, moved_key, moved_value);
-                        self = self.delete_helper(prev_child, moved_key);
-                        self.nodes[node].keys[i] = self.nodes[prev_child].keys[0];
+                        node.children.push(None);
+                        let mut prev_children = node.children.swap_remove(i + 1).unwrap();
+                        let moved_key = prev_children.keys[0];
+                        let moved_value = prev_children.pointers[0].clone();
+                        self = self.insert_helper(&mut temp, moved_key, moved_value);
+                        self = self.delete_helper(&mut prev_children, moved_key);
+                        node.keys[i] = prev_children.keys[0];
+                        node.children[i + 1] = Some(prev_children);
                     }
                 }
 
-                if self.nodes[temp].key_num == 0 {
-                    self.nodes[node].child[i] = self.nodes[temp].child[0];
+                if temp.key_num == 0 {
+                    node.children[i] = temp.children.swap_remove(0);
+                } else {
+                    node.children[i] = Some(temp);
                 }
             }
         }
         self
     }
 
-    fn merge(mut self, node1: usize, node2: usize) -> BPlus {
-        let new_key_num = self.nodes[node1].key_num + self.nodes[node2].key_num;
+    fn merge(self, node1: &mut Box<Node>, node2: &mut Box<Node>) -> BPlus {
+        let new_key_num = node1.key_num + node2.key_num;
         
-        self.nodes[node1].keys.resize(new_key_num, 0);
-        if self.nodes[node1].leaf {
-            self.nodes[node1].pointers.resize(new_key_num, FileHandler::default());
+        node1.keys.resize(new_key_num, 0);
+        if node1.leaf {
+            node1.pointers.resize(new_key_num, FileHandler::default());
         } else {
-            self.nodes[node1].child.resize(new_key_num + 2, 0);
+            node1.children.resize(new_key_num + 2, None);
         }
-        for i in 0..self.nodes[node2].key_num {
-            let temp = self.nodes[node1].key_num;
-            self.nodes[node1].keys[temp + i] = self.nodes[node2].keys[i];
-            if self.nodes[node1].leaf {
-                self.nodes[node1].pointers[temp] = self.nodes[node2].pointers[i].clone();
+        for i in 0..node2.key_num {
+            let temp = node1.key_num;
+            node1.keys[temp + i] = node2.keys[i];
+            if node1.leaf {
+                node1.pointers[temp] = node2.pointers[i].clone();
             } else {
-                self.nodes[node1].child[temp + i + 1] = self.nodes[node2].child[i];
+                node1.children[temp + i + 1] = node2.children[i].clone();
             }
         }
 
-        if !self.nodes[node1].leaf {
-            self.nodes[node1].child[new_key_num + 1] = self.nodes[node2].child[self.nodes[node2].key_num];
+        if !node1.leaf {
+            node1.children[new_key_num + 1] = node2.children[node2.key_num].clone();
         }
 
         self
@@ -314,6 +315,23 @@ impl BPlus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chunk::ChunkPointer;
+
+    #[test]
+    fn test_insert_and_find() {
+        let mut tree: BPlus = BPlus::new(2);
+        tree = tree.insert(1, FileHandler::new("file1.txt".to_string()));
+        tree = tree.insert(2, FileHandler::new("file2.txt".to_string()));
+        tree = tree.insert(3, FileHandler::new("file3.txt".to_string()));
+        tree = tree.insert(4, FileHandler::new("file4.txt".to_string()));
+        tree = tree.insert(5, FileHandler::new("file5.txt".to_string()));
+        let a = tree.find(1).unwrap();
+        let _res = a.write(b"test1");
+        let a = tree.find(1).unwrap();
+        let mut buf = Vec::new();
+        let _res = a.read(&mut buf);
+        assert_eq!(std::str::from_utf8(&buf).unwrap(), "test1");
+    }
 
     #[test]
     fn test_insert_and_delete() {
@@ -323,10 +341,64 @@ mod tests {
         tree = tree.insert(3, FileHandler::new("file3.txt".to_string()));
         tree = tree.insert(4, FileHandler::new("file4.txt".to_string()));
         tree = tree.insert(5, FileHandler::new("file5.txt".to_string()));
+        tree = tree.delete(1);
+        let a = tree.find(1);
+        match a {
+            Some(_x) => assert!(false),
+            None => return
+        }
+    }
+
+    #[test]
+    fn test_insert_delete_and_find() {
+        let mut tree: BPlus = BPlus::new(2);
+        tree = tree.insert(1, FileHandler::new("file1.txt".to_string()));
+        tree = tree.insert(2, FileHandler::new("file2.txt".to_string()));
+        tree = tree.insert(3, FileHandler::new("file3.txt".to_string()));
+        tree = tree.insert(4, FileHandler::new("file4.txt".to_string()));
+        tree = tree.insert(5, FileHandler::new("file5.txt".to_string()));
+        tree = tree.delete(2);
+        tree = tree.delete(3);
+        tree = tree.delete(4);
+        tree = tree.delete(5);
         let a = tree.find(1).unwrap();
-        a.write(b"test1");
-        let mut buf = Vec::new();
-        let res = a.read(&mut buf);
-        assert_eq!(std::str::from_utf8(&buf).unwrap(), "test1");
+        assert_eq!(a.path, "file1.txt");
+    }
+
+    #[test]
+    fn test_insert_and_find_many_nodes() {
+        let mut tree: BPlus = BPlus::new(2);
+        tree = tree.insert(1, FileHandler::new("file1.txt".to_string()));
+        for i in 2..30 {
+            tree = tree.insert(i, FileHandler::new("file2.txt".to_string()));
+        }
+        let a = tree.find(1).unwrap();
+        assert_eq!(a.path, "file1.txt");
+    }
+
+    #[test]
+    fn test_insert_and_delete_many_nodes() {
+        let mut tree: BPlus = BPlus::new(2);
+        tree = tree.insert(1, FileHandler::new("file1.txt".to_string()));
+        for i in 2..30 {
+            tree = tree.insert(i, FileHandler::new("file2.txt".to_string()));
+        }
+
+        for i in 2..15 {
+            tree = tree.delete(i);
+        }
+        for i in 2..15 {
+            let a = tree.find(i);
+            match a {
+                Some(_x) => assert!(false),
+                None => continue
+            }
+        }
+        for i in 15..30 {
+            let a = tree.find(i).unwrap();
+            assert_eq!(a.path, "file2.txt");
+        }
+        let a = tree.find(1).unwrap();
+        assert_eq!(a.path, "file1.txt");
     }
 }
