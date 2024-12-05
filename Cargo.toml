@@ -1,6 +1,7 @@
 [package]
-name = "BPlusTree"
+name = "bplus_tree"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+chunkfs = { git = "https://github.com/Piletskii-Oleg/chunkfs.git", branch = "master", features = ["chunkers", "hashers"] }
