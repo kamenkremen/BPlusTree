@@ -6,7 +6,7 @@ use std::{
 extern crate chunkfs;
 use chunkfs::{Data, DataContainer, Database};
 
-const MAXSIZE: u64 = 2<<11;
+const MAXSIZE: u64 = 2 << 11;
 
 pub struct BPlus<K> {
     t: usize,

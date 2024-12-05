@@ -2,10 +2,10 @@ extern crate chunkfs;
 
 use std::path::PathBuf;
 
+use bplus_tree::bplus_tree::BPlus;
 use chunkfs::chunkers::{FSChunker, LeapChunker};
 use chunkfs::create_cdc_filesystem;
 use chunkfs::hashers::SimpleHasher;
-use bplus_tree::bplus_tree::BPlus;
 
 const MB: usize = 1024 * 1024;
 const STORAGEPATH: &str = "./tests/storage";
