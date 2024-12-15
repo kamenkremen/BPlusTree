@@ -4,4 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-chunkfs = { git = "https://github.com/Piletskii-Oleg/chunkfs.git", branch = "master", features = ["chunkers", "hashers"] }
+chunkfs = { git = "https://github.com/Piletskii-Oleg/chunkfs.git", branch = "main", features = ["chunkers", "hashers"] }
+criterion = "0.5.1"
+gnuplot = "0.0.44"
+tokio = { version = "1.42.0", features = ["full"] }
+
+[[bench]]
+name = "bench"
+harness = false

@@ -6,7 +6,7 @@ use std::{
 extern crate chunkfs;
 use chunkfs::{Data, DataContainer, Database};
 
-const MAXSIZE: u64 = 2 << 11;
+const MAXSIZE: u64 = 2 << 20;
 
 pub struct BPlus<K> {
     t: usize,
@@ -378,10 +378,6 @@ impl<K: Ord + Clone + Default> Database<K, DataContainer<()>> for BPlus<K> {
 
     fn contains(&self, key: &K) -> bool {
         self.contains(key)
-    }
-
-    fn remove(&mut self, key: &K) {
-        self.remove(key);
     }
 }
 
