@@ -514,7 +514,7 @@ mod tests {
         let mut htable = HashMap::<usize, Vec<u8>>::new();
         for i in 1..10000 {
             let key;
-            key = (i * 113) % 10000000;
+            key = i * 113;
             let _ = tree.insert(key, vec![key as u8; 1064]);
             htable.insert(key, vec![key as u8; 1064]);
         }
