@@ -6,13 +6,14 @@ use bplus_tree::bplus_tree::BPlus;
 use chunkfs::chunkers::{FSChunker, LeapChunker};
 use chunkfs::create_cdc_filesystem;
 use chunkfs::hashers::SimpleHasher;
+use tempdir::TempDir;
 
 const MB: usize = 1024 * 1024;
-const STORAGEPATH: &str = "./tests/storage";
 
 #[test]
 fn write_read_complete_test() {
-    let path = PathBuf::from(STORAGEPATH).join("storage1");
+    let tempdir = &TempDir::new("storage1").unwrap();
+    let path = PathBuf::new().join(tempdir.path());
     let mut fs = create_cdc_filesystem(BPlus::new(100, path), SimpleHasher);
 
     let mut handle = fs.create_file("file", LeapChunker::default()).unwrap();
@@ -30,7 +31,8 @@ fn write_read_complete_test() {
 
 #[test]
 fn write_read_blocks_test() {
-    let path = PathBuf::from(STORAGEPATH).join("storage2");
+    let tempdir = &TempDir::new("storage2").unwrap();
+    let path = PathBuf::new().join(tempdir.path());
     let mut fs = create_cdc_filesystem(BPlus::new(100, path), SimpleHasher);
     let mut handle = fs.create_file("file", FSChunker::new(4096)).unwrap();
 
@@ -51,7 +53,8 @@ fn write_read_blocks_test() {
 
 #[test]
 fn read_file_with_size_less_than_1mb() {
-    let path = PathBuf::from(STORAGEPATH).join("storage3");
+    let tempdir = &TempDir::new("storage3").unwrap();
+    let path = PathBuf::new().join(tempdir.path());
     let mut fs = create_cdc_filesystem(BPlus::new(100, path), SimpleHasher);
 
     let mut handle = fs.create_file("file", FSChunker::new(4096)).unwrap();
@@ -67,7 +70,8 @@ fn read_file_with_size_less_than_1mb() {
 
 #[test]
 fn write_read_big_file_at_once() {
-    let path = PathBuf::from(STORAGEPATH).join("storage4");
+    let tempdir = &TempDir::new("storage4").unwrap();
+    let path = PathBuf::new().join(tempdir.path());
     let mut fs = create_cdc_filesystem(BPlus::new(100, path), SimpleHasher);
 
     let mut handle = fs.create_file("file", FSChunker::new(4096)).unwrap();
