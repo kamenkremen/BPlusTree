@@ -15,9 +15,7 @@ fn write_read_complete_test() {
     let path = PathBuf::from(STORAGEPATH).join("storage1");
     let mut fs = create_cdc_filesystem(BPlus::new(100, path), SimpleHasher);
 
-    let mut handle = fs
-        .create_file("file", LeapChunker::default())
-        .unwrap();
+    let mut handle = fs.create_file("file", LeapChunker::default()).unwrap();
     fs.write_to_file(&mut handle, &[1; MB]).unwrap();
     fs.write_to_file(&mut handle, &[1; MB]).unwrap();
 
@@ -74,7 +72,7 @@ fn write_read_big_file_at_once() {
 
     let mut handle = fs.create_file("file", FSChunker::new(4096)).unwrap();
 
-    let data = vec![1; 3 * MB + 50];
+    let data = vec![1; 64 * MB + 50];
     fs.write_to_file(&mut handle, &data).unwrap();
     fs.close_file(handle).unwrap();
 

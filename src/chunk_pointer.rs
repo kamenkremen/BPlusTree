@@ -1,5 +1,5 @@
 use std::{
-    fs::{File, OpenOptions},
+    fs::File,
     io::{self},
     os::unix::fs::FileExt,
     path::PathBuf,
@@ -8,7 +8,7 @@ use std::{
 #[allow(dead_code)]
 pub trait ChunkPointer {
     fn read(&self) -> io::Result<Vec<u8>>;
-    fn new(path: PathBuf, offset: u64, content: Vec<u8>, is_new: bool) -> Self;
+    fn new(path: PathBuf, offset: u64, size: usize) -> Self;
 }
 
 #[derive(Clone, Default)]
@@ -19,32 +19,8 @@ pub struct ChunkHandler {
 }
 
 impl ChunkPointer for ChunkHandler {
-    fn new(path: PathBuf, offset: u64, content: Vec<u8>, is_new: bool) -> Self {
-        let file;
-
-        if path.exists() && !is_new {
-            file = Result::expect(
-                OpenOptions::new()
-                    .write(true)
-                    .append(true)
-                    .open(path.clone()),
-                "file reading error",
-            );
-        } else {
-            file = File::create(path.clone()).expect("error in file creation");
-        }
-
-        let size = content.len();
-
-        let res = file.write_at(&content, offset);
-        match res {
-            Err(error) => panic!("{}", error),
-            Ok(_num) => ChunkHandler {
-                path: path,
-                offset: offset,
-                size: size,
-            },
-        }
+    fn new(path: PathBuf, offset: u64, size: usize) -> Self {
+        ChunkHandler { path, offset, size }
     }
 
     fn read(&self) -> io::Result<Vec<u8>> {
