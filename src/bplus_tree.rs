@@ -262,7 +262,7 @@ impl<K: Ord + Clone + Default> BPlus<K> {
     }
 
     fn remove_helper(&mut self, node: &mut Box<Node<K>>, key: &K) {
-        let i ;
+        let i;
 
         if node.leaf {
             let res = node.keys.binary_search(key);
