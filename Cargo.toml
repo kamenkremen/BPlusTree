@@ -3,13 +3,14 @@ name = "bplus_tree"
 version = "0.1.0"
 edition = "2021"
 
-[dependencies]
+[dev-dependencies]
 tempdir = "0.3.7"
-chunkfs = { git = "https://github.com/Piletskii-Oleg/chunkfs.git", branch = "custom-benches", features = ["chunkers", "hashers", "bench"] }
-criterion = "0.5.1"
-gnuplot = "0.0.44"
-tokio = { version = "1.42.0", features = ["full"] }
 tempfile = "3.14.0"
+criterion = "0.5.1"
+
+[dependencies]
+chunkfs = { git = "https://github.com/Piletskii-Oleg/chunkfs.git", branch = "custom-benches", features = ["chunkers", "hashers", "bench"] }
+gnuplot = "0.0.44"
 approx = "0.5.1"
 
 [[bench]]

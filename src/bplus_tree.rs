@@ -10,29 +10,41 @@ use chunkfs::{Data, DataContainer, Database};
 
 const MAXSIZE: u64 = 2 << 20;
 
+/// B+ tree structure
 pub struct BPlus<K> {
+    /// Parameter responsible for the minimum and maximum number of children
     t: usize,
+    /// Root of the tree
     root: Option<Box<Node<K>>>,
+    /// Path to the directory where chunks will be saved
     path: PathBuf,
+    /// Number of current file with chunkgs 
     file_number: usize,
+    /// Current offset in the current file
     offset: u64,
+    /// The file where chunks are currently being written
     current_file: File,
 }
 
+/// Node for B+ tree
 #[derive(Clone)]
-#[allow(dead_code)]
 struct Node<K> {
-    leaf: bool,
+    /// Indicates whether the node is a leaf
+    is_leaf: bool,
+    /// Number of keys in the node
     key_num: usize,
+    /// Vector of keys in the node
     keys: Vec<K>,
+    /// Vector of children of this node
     children: Vec<Option<Box<Node<K>>>>,
+    /// Vector of pointers to data stored in a node
     pointers: Vec<ChunkHandler>,
 }
 
 impl<K: Ord + Clone + Default> Node<K> {
-    fn new(leaf: bool) -> Self {
+    fn new(is_leaf: bool) -> Self {
         let new_node = Node {
-            leaf: leaf,
+            is_leaf,
             key_num: 0,
             keys: Vec::new(),
             children: Vec::new(),
@@ -43,78 +55,68 @@ impl<K: Ord + Clone + Default> Node<K> {
 }
 #[allow(dead_code)]
 impl<K: Ord + Clone + Default> BPlus<K> {
-    pub fn new(t: usize, path: PathBuf) -> Self {
+    pub fn new(t: usize, path: PathBuf) -> io::Result<Self> {
         let root = Node::new(true);
+
         let mut nodes: Vec<Box<Node<K>>> = Vec::new();
         nodes.push(Box::new(root));
+
         let path_to_file = path.join("0");
-        let res = File::create(path_to_file);
-        let current_file;
-        match res {
-            Ok(x) => current_file = x,
-            Err(_x) => panic!(),
-        }
-        Self {
+        let current_file = File::create(path_to_file)?;
+        Ok(Self {
             t,
             root: Some(Box::new(Node::new(true))),
             path,
             file_number: 0,
             offset: 0,
             current_file,
-        }
+        })
     }
 
     fn find_leaf<'a>(&self, node: &'a Box<Node<K>>, key: &K) -> Option<&'a Box<Node<K>>> {
-        let i;
         let res = node.keys.binary_search(key);
-        match res {
-            Ok(x) => i = x + 1,
-            Err(x) => i = x,
-        }
-        if node.leaf {
-            for i in 0..node.key_num {
-                if node.keys[i] == *key {
-                    return Some(node);
-                }
+        let i = match res {
+            Ok(x) => x + 1,
+            Err(x) => x,
+        };
+
+        if node.is_leaf {
+            if node.keys.contains(key) {
+                Some(node)
+            } else {
+                None
             }
-            return None;
         } else {
-            return self.find_leaf(node.children[i].as_ref().unwrap(), key);
+            self.find_leaf(node.children[i].as_ref().unwrap(), key)
         }
     }
 
     pub fn get(&self, key: &K) -> io::Result<Vec<u8>> {
-        let i;
         let maybe_node = self.find_leaf(self.root.as_ref().unwrap(), key);
-
-        let node;
-        match maybe_node {
-            Some(x) => node = x,
-            None => return Err(ErrorKind::NotFound.into()),
-        }
+        let Some(node) = maybe_node else {
+            return Err(ErrorKind::NotFound.into());
+        };
 
         let res = node.keys.binary_search(key);
-        match res {
-            Ok(x) => i = x,
+        let i = match res {
+            Ok(x) => x,
             Err(x) => {
                 if x == node.key_num {
                     return Err(ErrorKind::NotFound.into());
                 }
-                i = x
+                x
             }
-        }
-        let res = node.pointers[i].read();
-        match res {
-            Err(error) => Err(error),
-            Ok(result) => Ok(result),
-        }
+        };
+
+        node.pointers[i].read()
     }
 
-    fn split_children(&mut self, parent: &mut Box<Node<K>>, i: usize) {
+    /// Split one of the children of the node into two
+    fn split_children(&mut self, parent: &mut Box<Node<K>>, child_index: usize) {
         parent.children.push(None);
-        let mut children = parent.children.swap_remove(i).unwrap().clone();
-        let mut new_children = Node::new(children.leaf);
-        if new_children.leaf {
+        let mut children = parent.children.swap_remove(child_index).unwrap().clone();
+        let mut new_children = Node::new(children.is_leaf);
+        if new_children.is_leaf {
             new_children.key_num = self.t;
         } else {
             new_children.key_num = self.t - 1;
@@ -126,19 +128,20 @@ impl<K: Ord + Clone + Default> BPlus<K> {
             .resize(new_children.key_num, ChunkHandler::default());
         new_children.children.resize(new_children.key_num + 1, None);
 
-        let mut not_leaf_const = 0;
-        if !new_children.leaf {
-            not_leaf_const = 1;
-        }
+        let not_leaf_const = if !new_children.is_leaf {
+            1
+        } else {
+            0
+        };
 
         for j in 0..new_children.key_num {
             new_children.keys[j] = children.keys[j + self.t + not_leaf_const].clone();
-            if new_children.leaf {
+            if new_children.is_leaf {
                 new_children.pointers[j] = children.pointers[j + self.t + not_leaf_const].clone();
             }
         }
 
-        if !children.leaf {
+        if !children.is_leaf {
             for j in 0..=new_children.key_num {
                 new_children.children.push(None);
                 new_children.children[j] =
@@ -150,49 +153,48 @@ impl<K: Ord + Clone + Default> BPlus<K> {
 
         parent.children.push(None);
 
-        for j in parent.key_num..i {
+        for j in parent.key_num..child_index {
             parent.children.push(None);
             parent.children[j + 1] = parent.children.swap_remove(j);
         }
 
-        parent.children[i + 1] = Some(Box::new(new_children));
+        parent.children[child_index + 1] = Some(Box::new(new_children));
         parent.keys.push(K::default());
-        if i != parent.key_num {
-            for j in parent.key_num - 1..=i {
+        if child_index != parent.key_num {
+            for j in parent.key_num - 1..=child_index {
                 parent.keys[j + 1] = parent.keys[j].clone();
             }
         }
         parent.key_num += 1;
-        parent.keys[i] = children.keys[self.t].clone();
+        parent.keys[child_index] = children.keys[self.t].clone();
         let key_num = children.key_num;
         children.keys.resize(key_num, K::default());
         children.pointers.resize(key_num, ChunkHandler::default());
         children.children.resize(key_num + 1, None);
-        parent.children[i] = Some(children);
+        parent.children[child_index] = Some(children);
     }
 
     pub fn contains(&self, key: &K) -> bool {
         let result = self.get(key);
         match result {
-            Ok(_x) => true,
-            Err(_x) => false,
+            Ok(_) => true,
+            Err(_) => false,
         }
     }
 
     fn insert_helper(&mut self, node: &mut Box<Node<K>>, key: &K, value: ChunkHandler) {
-        let i;
         let res = node.keys.binary_search(key);
-        match res {
-            Ok(x) => i = x + 1,
-            Err(x) => i = x,
-        }
-        if !node.leaf {
-            let key_num;
-            {
+        let i = match res {
+            Ok(x) => x + 1,
+            Err(x) => x,
+        };
+
+        if !node.is_leaf {
+            let key_num = {
                 let temp = node.children[i].as_mut().unwrap();
                 self.insert_helper(temp, key, value);
-                key_num = temp.key_num;
-            }
+                temp.key_num
+            };
 
             if key_num == 2 * self.t {
                 self.split_children(node, i);
@@ -227,10 +229,7 @@ impl<K: Ord + Clone + Default> BPlus<K> {
         }
 
         let value_size = value.len();
-        let res = self.current_file.write_at(&value, self.offset);
-        if res.is_err() {
-            panic!();
-        }
+        self.current_file.write_at(&value, self.offset)?;
         let value_to_insert = ChunkHandler::new(
             self.path.join(format!("{0}", self.file_number)),
             self.offset,
@@ -253,7 +252,7 @@ impl<K: Ord + Clone + Default> BPlus<K> {
     pub fn remove(&mut self, key: &K) {
         let mut root = self.root.clone().unwrap();
         self.remove_helper(&mut root, key);
-        if root.key_num == 0 && !root.leaf {
+        if root.key_num == 0 && !root.is_leaf {
             let temp = root.children[0].clone();
             self.root = Some(temp.unwrap());
         }
@@ -262,14 +261,12 @@ impl<K: Ord + Clone + Default> BPlus<K> {
     }
 
     fn remove_helper(&mut self, node: &mut Box<Node<K>>, key: &K) {
-        let i;
-
-        if node.leaf {
+        if node.is_leaf {
             let res = node.keys.binary_search(key);
-            match res {
-                Ok(x) => i = x,
+            let i = match res {
+                Ok(x) => x,
                 Err(_x) => return,
-            }
+            };
             if i != node.key_num {
                 node.key_num -= 1;
                 let key_num = node.key_num;
@@ -280,71 +277,74 @@ impl<K: Ord + Clone + Default> BPlus<K> {
                 node.keys.resize(key_num, K::default());
                 node.pointers.resize(key_num, ChunkHandler::default());
             }
+            return;
+        }
+
+        let res = node.keys.binary_search(key);
+        let i = match res {
+            Ok(x) => x + 1,
+            Err(x) => x,
+        };
+        node.children.push(None);
+        let mut temp = node.children.swap_remove(i).unwrap();
+        self.remove_helper(&mut temp, key);
+
+        if temp.key_num != self.t - 2 {
+            return
+        }
+
+        if i != 0 {
+            if node.children[i - 1].as_ref().unwrap().key_num == self.t - 1 {
+                node.children.push(None);
+                let mut temp1 = node.children.swap_remove(i - 1).unwrap();
+                self.merge(&mut temp1, &mut temp);
+                node.key_num -= 1;
+                let key_num = node.key_num;
+                for j in i..key_num {
+                    node.keys[j] = node.keys[j + 1].clone();
+                    node.keys[j] = node.keys[j + 1].clone();
+                }
+                node.keys.resize(key_num, K::default());
+                node.children[i - 1] = Some(temp1);
+            } else {
+                node.children.push(None);
+                let mut prev_children = node.children.swap_remove(i - 1).unwrap();
+                let moved_key = prev_children.keys[prev_children.key_num - 1].clone();
+                let moved_value = prev_children.pointers[prev_children.key_num - 1].clone();
+                self.insert_helper(&mut temp, &moved_key, moved_value);
+                self.remove_helper(&mut prev_children, &moved_key);
+                node.keys[i - 1] = temp.keys[0].clone();
+                node.children[i - 1] = Some(prev_children);
+            }
         } else {
-            let res = node.keys.binary_search(key);
-            match res {
-                Ok(x) => i = x + 1,
-                Err(x) => i = x,
-            }
-            node.children.push(None);
-            let mut temp = node.children.swap_remove(i).unwrap();
-            self.remove_helper(&mut temp, key);
-            if temp.key_num == self.t - 2 {
-                if i != 0 {
-                    if node.children[i - 1].as_ref().unwrap().key_num == self.t - 1 {
-                        node.children.push(None);
-
-                        let mut temp1 = node.children.swap_remove(i - 1).unwrap();
-                        self.merge(&mut temp1, &mut temp);
-                        node.key_num -= 1;
-                        let key_num = node.key_num;
-                        for j in i..key_num {
-                            node.keys[j] = node.keys[j + 1].clone();
-                            node.keys[j] = node.keys[j + 1].clone();
-                        }
-                        node.keys.resize(key_num, K::default());
-                        node.children[i - 1] = Some(temp1);
-                    } else {
-                        node.children.push(None);
-                        let mut prev_children = node.children.swap_remove(i - 1).unwrap();
-                        let moved_key = prev_children.keys[prev_children.key_num - 1].clone();
-                        let moved_value = prev_children.pointers[prev_children.key_num - 1].clone();
-                        self.insert_helper(&mut temp, &moved_key, moved_value);
-                        self.remove_helper(&mut prev_children, &moved_key);
-                        node.keys[i - 1] = temp.keys[0].clone();
-                        node.children[i - 1] = Some(prev_children);
-                    }
-                } else {
-                    if node.children[i + 1].as_ref().unwrap().key_num == self.t - 1 {
-                        node.children.push(None);
-                        let mut temp1 = node.children.swap_remove(i + 1).unwrap();
-                        self.merge(&mut temp, &mut temp1);
-                        node.key_num -= 1;
-                        let key_num = node.key_num;
-                        for j in 0..key_num {
-                            node.keys[j] = node.keys[j + 1].clone();
-                            node.keys[j] = node.keys[j + 1].clone();
-                        }
-                        node.keys.resize(key_num, K::default());
-                        node.children[i + 1] = Some(temp1);
-                    } else {
-                        node.children.push(None);
-                        let mut prev_children = node.children.swap_remove(i + 1).unwrap();
-                        let moved_key = prev_children.keys[0].clone();
-                        let moved_value = prev_children.pointers[0].clone();
-                        self.insert_helper(&mut temp, &moved_key, moved_value);
-                        self.remove_helper(&mut prev_children, &moved_key);
-                        node.keys[i] = prev_children.keys[0].clone();
-                        node.children[i + 1] = Some(prev_children);
-                    }
+            if node.children[i + 1].as_ref().unwrap().key_num == self.t - 1 {
+                node.children.push(None);
+                let mut temp1 = node.children.swap_remove(i + 1).unwrap();
+                self.merge(&mut temp, &mut temp1);
+                node.key_num -= 1;
+                let key_num = node.key_num;
+                for j in 0..key_num {
+                    node.keys[j] = node.keys[j + 1].clone();
+                    node.keys[j] = node.keys[j + 1].clone();
                 }
-
-                if temp.key_num == 0 {
-                    node.children[i] = temp.children.swap_remove(0);
-                } else {
-                    node.children[i] = Some(temp);
-                }
+                node.keys.resize(key_num, K::default());
+                node.children[i + 1] = Some(temp1);
+            } else {
+                node.children.push(None);
+                let mut prev_children = node.children.swap_remove(i + 1).unwrap();
+                let moved_key = prev_children.keys[0].clone();
+                let moved_value = prev_children.pointers[0].clone();
+                self.insert_helper(&mut temp, &moved_key, moved_value);
+                self.remove_helper(&mut prev_children, &moved_key);
+                node.keys[i] = prev_children.keys[0].clone();
+                node.children[i + 1] = Some(prev_children);
             }
+        }
+
+        if temp.key_num == 0 {
+            node.children[i] = temp.children.swap_remove(0);
+        } else {
+            node.children[i] = Some(temp);
         }
     }
 
@@ -352,7 +352,7 @@ impl<K: Ord + Clone + Default> BPlus<K> {
         let new_key_num = node1.key_num + node2.key_num;
 
         node1.keys.resize(new_key_num, K::default());
-        if node1.leaf {
+        if node1.is_leaf {
             node1.pointers.resize(new_key_num, ChunkHandler::default());
         } else {
             node1.children.resize(new_key_num + 2, None);
@@ -360,14 +360,14 @@ impl<K: Ord + Clone + Default> BPlus<K> {
         for i in 0..node2.key_num {
             let temp = node1.key_num;
             node1.keys[temp + i] = node2.keys[i].clone();
-            if node1.leaf {
+            if node1.is_leaf {
                 node1.pointers[temp] = node2.pointers[i].clone();
             } else {
                 node1.children[temp + i + 1] = node2.children[i].clone();
             }
         }
 
-        if !node1.leaf {
+        if !node1.is_leaf {
             node1.children[new_key_num + 1] = node2.children[node2.key_num].clone();
         }
     }
@@ -382,10 +382,7 @@ impl<K: Ord + Clone + Default> Database<K, DataContainer<()>> for BPlus<K> {
     }
 
     fn get(&self, key: &K) -> io::Result<DataContainer<()>> {
-        match self.get(key) {
-            Ok(chunk) => Ok(DataContainer::from(chunk)),
-            Err(error) => Err(error),
-        }
+        self.get(key).map(DataContainer::from)
     }
 
     fn contains(&self, key: &K) -> bool {
@@ -403,41 +400,39 @@ mod tests {
 
     #[test]
     fn test_insert_and_find() {
-        let tempdir = &TempDir::new("1").unwrap();
+        let tempdir = TempDir::new("1").unwrap();
         let path = PathBuf::new().join(tempdir.path());
-        let mut tree: BPlus<usize> = BPlus::new(2, path);
-        let _ = tree.insert(1, vec![1 as u8; 1]);
-        let _ = tree.insert(2, vec![2 as u8; 1]);
-        let _ = tree.insert(3, vec![2 as u8; 1]);
-        let _ = tree.insert(4, vec![2 as u8; 1]);
-        let _ = tree.insert(5, vec![2 as u8; 1]);
-        let a = tree.get(&1).unwrap();
-        assert_eq!(a, vec![1 as u8; 1]);
-    }
-
-    #[test]
-    fn test_insert_and_delete() {
-        let tempdir = &TempDir::new("2").unwrap();
-        let path = PathBuf::new().join(tempdir.path());
-        let mut tree: BPlus<usize> = BPlus::new(2, path);
-        let _ = tree.insert(1, vec![1 as u8; 1]);
-        let _ = tree.insert(2, vec![2 as u8; 1]);
-        let _ = tree.insert(3, vec![2 as u8; 1]);
-        let _ = tree.insert(4, vec![2 as u8; 1]);
-        let _ = tree.insert(5, vec![2 as u8; 1]);
-        tree.remove(&1);
-        let a = tree.get(&1);
-        match a {
-            Ok(_x) => assert!(false),
-            Err(_x) => return,
+        let mut tree: BPlus<usize> = BPlus::new(2, path).unwrap();
+        for i in 1..6 {
+            let _ = tree.insert(i, vec![i as u8; 1]);
+        }
+        
+        for i in 1..6 {
+            let a = tree.get(&i).unwrap();
+            assert_eq!(a, vec![i as u8; 1]);
         }
     }
 
     #[test]
-    fn test_insert_delete_and_find() {
-        let tempdir = &TempDir::new("3").unwrap();
+    fn test_insert_and_delete() {
+        let tempdir = TempDir::new("2").unwrap();
         let path = PathBuf::new().join(tempdir.path());
-        let mut tree: BPlus<usize> = BPlus::new(2, path);
+        let mut tree: BPlus<usize> = BPlus::new(2, path).unwrap();
+        for i in 1..6 {
+            let _ = tree.insert(i, vec![i as u8; 1]);
+        }
+
+        tree.remove(&1);
+        let a = tree.get(&1);
+        assert!(a.is_err());
+
+    }
+
+    #[test]
+    fn test_insert_delete_and_find() {
+        let tempdir = TempDir::new("3").unwrap();
+        let path = PathBuf::new().join(tempdir.path());
+        let mut tree: BPlus<usize> = BPlus::new(2, path).unwrap();
         let _ = tree.insert(1, vec![1 as u8; 1]);
         let _ = tree.insert(2, vec![2 as u8; 1]);
         let _ = tree.insert(3, vec![2 as u8; 1]);
@@ -453,9 +448,9 @@ mod tests {
 
     #[test]
     fn test_insert_and_find_many_nodes() {
-        let tempdir = &TempDir::new("4").unwrap();
+        let tempdir = TempDir::new("4").unwrap();
         let path = PathBuf::new().join(tempdir.path());
-        let mut tree: BPlus<usize> = BPlus::new(2, path);
+        let mut tree: BPlus<usize> = BPlus::new(2, path).unwrap();
         for i in 1..256 {
             let _ = tree.insert(i, vec![i as u8; 1]);
         }
@@ -466,9 +461,9 @@ mod tests {
 
     #[test]
     fn test_insert_and_delete_many_nodes() {
-        let tempdir = &TempDir::new("5").unwrap();
+        let tempdir = TempDir::new("5").unwrap();
         let path = PathBuf::new().join(tempdir.path());
-        let mut tree: BPlus<usize> = BPlus::new(2, path);
+        let mut tree: BPlus<usize> = BPlus::new(2, path).unwrap();
         let _ = tree.insert(1, vec![1 as u8; 1]);
         for i in 2..30 {
             let _ = tree.insert(i, vec![i as u8; 1]);
@@ -494,9 +489,9 @@ mod tests {
 
     #[test]
     fn test_large_data_consecutive_numbers() {
-        let tempdir = &TempDir::new("6").unwrap();
+        let tempdir = TempDir::new("6").unwrap();
         let path = PathBuf::new().join(tempdir.path());
-        let mut tree: BPlus<usize> = BPlus::new(100, path);
+        let mut tree: BPlus<usize> = BPlus::new(100, path).unwrap();
         for i in 1..10000 {
             let _ = tree.insert(i, vec![i as u8; 1064]);
         }
@@ -508,9 +503,9 @@ mod tests {
 
     #[test]
     fn test_large_data() {
-        let tempdir = &TempDir::new("7").unwrap();
+        let tempdir = TempDir::new("7").unwrap();
         let path = PathBuf::new().join(tempdir.path());
-        let mut tree: BPlus<usize> = BPlus::new(100, path);
+        let mut tree: BPlus<usize> = BPlus::new(100, path).unwrap();
         let mut htable = HashMap::<usize, Vec<u8>>::new();
         for i in 1..10000 {
             let key;
@@ -518,8 +513,8 @@ mod tests {
             let _ = tree.insert(key, vec![key as u8; 1064]);
             htable.insert(key, vec![key as u8; 1064]);
         }
-        for i in htable {
-            assert_eq!(tree.get(&i.0).unwrap(), i.1);
+        for (key, value) in htable {
+            assert_eq!(tree.get(&key).unwrap(), value);
         }
     }
 }

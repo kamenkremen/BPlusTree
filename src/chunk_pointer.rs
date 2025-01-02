@@ -11,6 +11,7 @@ pub trait ChunkPointer {
     fn new(path: PathBuf, offset: u64, size: usize) -> Self;
 }
 
+/// Structure that handles chunks written in files
 #[derive(Clone, Default)]
 pub struct ChunkHandler {
     path: PathBuf,
@@ -24,7 +25,7 @@ impl ChunkPointer for ChunkHandler {
     }
 
     fn read(&self) -> io::Result<Vec<u8>> {
-        let file = Result::expect(File::open(self.path.clone()), "file error");
+        let file = File::open(self.path.clone()).expect("file error");
         let mut buf = vec![0; self.size];
         let result = file.read_exact_at(&mut buf, self.offset);
         match result {

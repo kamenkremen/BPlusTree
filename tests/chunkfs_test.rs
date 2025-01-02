@@ -19,7 +19,7 @@ const MB: usize = 1024 * 1024;
 fn write_read_complete_test() {
     let tempdir = &TempDir::new("storage1").unwrap();
     let path = PathBuf::new().join(tempdir.path());
-    let mut fs = create_cdc_filesystem(BPlus::new(100, path), SimpleHasher);
+    let mut fs = create_cdc_filesystem(BPlus::new(100, path).unwrap(), SimpleHasher);
 
     let mut handle = fs.create_file("file", LeapChunker::default()).unwrap();
     fs.write_to_file(&mut handle, &[1; MB]).unwrap();
@@ -38,7 +38,7 @@ fn write_read_complete_test() {
 fn write_read_blocks_test() {
     let tempdir = &TempDir::new("storage2").unwrap();
     let path = PathBuf::new().join(tempdir.path());
-    let mut fs = create_cdc_filesystem(BPlus::new(100, path), SimpleHasher);
+    let mut fs = create_cdc_filesystem(BPlus::new(100, path).unwrap(), SimpleHasher);
 
     let mut handle = fs.create_file("file", FSChunker::new(4096)).unwrap();
 
@@ -61,7 +61,7 @@ fn write_read_blocks_test() {
 fn read_file_with_size_less_than_1mb() {
     let tempdir = &TempDir::new("storage3").unwrap();
     let path = PathBuf::new().join(tempdir.path());
-    let mut fs = create_cdc_filesystem(BPlus::new(100, path), SimpleHasher);
+    let mut fs = create_cdc_filesystem(BPlus::new(100, path).unwrap(), SimpleHasher);
 
     let mut handle = fs.create_file("file", FSChunker::new(4096)).unwrap();
 
@@ -78,7 +78,7 @@ fn read_file_with_size_less_than_1mb() {
 fn write_read_big_file_at_once() {
     let tempdir = &TempDir::new("storage4").unwrap();
     let path = PathBuf::new().join(tempdir.path());
-    let mut fs = create_cdc_filesystem(BPlus::new(100, path), SimpleHasher);
+    let mut fs = create_cdc_filesystem(BPlus::new(100, path).unwrap(), SimpleHasher);
 
     let mut handle = fs.create_file("file", FSChunker::new(4096)).unwrap();
 
@@ -94,7 +94,7 @@ fn write_read_big_file_at_once() {
 fn two_file_handles_to_one_file() {
     let tempdir = &TempDir::new("storage6").unwrap();
     let path = PathBuf::new().join(tempdir.path());
-    let mut fs = create_cdc_filesystem(BPlus::new(100, path), SimpleHasher);
+    let mut fs = create_cdc_filesystem(BPlus::new(100, path).unwrap(), SimpleHasher);
     let mut handle1 = fs.create_file("file", LeapChunker::default()).unwrap();
     let mut handle2 = fs.open_file("file", LeapChunker::default()).unwrap();
     fs.write_to_file(&mut handle1, &[1; MB]).unwrap();
@@ -160,7 +160,7 @@ fn dedup_ratio_is_correct_for_fixed_size_chunker() {
 fn different_chunkers_from_vec_can_be_used_with_same_filesystem() {
     let tempdir = &TempDir::new("storage7").unwrap();
     let path = PathBuf::new().join(tempdir.path());
-    let mut fs = create_cdc_filesystem(BPlus::new(100, path), SimpleHasher);
+    let mut fs = create_cdc_filesystem(BPlus::new(100, path).unwrap(), SimpleHasher);
     let chunkers: Vec<ChunkerRef> = vec![
         SuperChunker::default().into(),
         LeapChunker::default().into(),
@@ -185,7 +185,7 @@ fn different_chunkers_from_vec_can_be_used_with_same_filesystem() {
 fn readonly_file_handle_cannot_write_can_read() {
     let tempdir = &TempDir::new("storage8").unwrap();
     let path = PathBuf::new().join(tempdir.path());
-    let mut fs = create_cdc_filesystem(BPlus::new(100, path), SimpleHasher);
+    let mut fs = create_cdc_filesystem(BPlus::new(100, path).unwrap(), SimpleHasher);
     let mut fh = fs.create_file("file", FSChunker::default()).unwrap();
     fs.write_to_file(&mut fh, &[1; MB]).unwrap();
     fs.close_file(fh).unwrap();
@@ -214,7 +214,7 @@ fn readonly_file_handle_cannot_write_can_read() {
 fn write_from_stream_slice() {
     let tempdir = &TempDir::new("storage9").unwrap();
     let path = PathBuf::new().join(tempdir.path());
-    let mut fs = create_cdc_filesystem(BPlus::new(100, path), SimpleHasher);
+    let mut fs = create_cdc_filesystem(BPlus::new(100, path).unwrap(), SimpleHasher);
     let mut fh = fs.create_file("file", FSChunker::default()).unwrap();
     fs.write_from_stream(&mut fh, &[1; MB * 2][..]).unwrap();
     fs.close_file(fh).unwrap();
@@ -233,7 +233,7 @@ fn write_from_stream_buf_reader() {
 
     let tempdir = &TempDir::new("storage10").unwrap();
     let path = PathBuf::new().join(tempdir.path());
-    let mut fs = create_cdc_filesystem(BPlus::new(100, path), SimpleHasher);
+    let mut fs = create_cdc_filesystem(BPlus::new(100, path).unwrap(), SimpleHasher);
     let mut fh = fs.create_file("file", FSChunker::default()).unwrap();
 
     fs.write_from_stream(&mut fh, file).unwrap();
