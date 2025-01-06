@@ -5,6 +5,7 @@ use std::{
     os::unix::fs::FileExt,
     path::PathBuf,
 };
+
 extern crate chunkfs;
 use chunkfs::{Data, DataContainer, Database};
 
@@ -18,7 +19,7 @@ pub struct BPlus<K> {
     root: Option<Box<Node<K>>>,
     /// Path to the directory where chunks will be saved
     path: PathBuf,
-    /// Number of current file with chunkgs 
+    /// Number of current file with chunkgs
     file_number: usize,
     /// Current offset in the current file
     offset: u64,
@@ -74,8 +75,7 @@ impl<K: Ord + Clone + Default> BPlus<K> {
     }
 
     fn find_leaf<'a>(&self, node: &'a Box<Node<K>>, key: &K) -> Option<&'a Box<Node<K>>> {
-        let res = node.keys.binary_search(key);
-        let i = match res {
+        let i = match node.keys.binary_search(key) {
             Ok(x) => x + 1,
             Err(x) => x,
         };
@@ -97,8 +97,7 @@ impl<K: Ord + Clone + Default> BPlus<K> {
             return Err(ErrorKind::NotFound.into());
         };
 
-        let res = node.keys.binary_search(key);
-        let i = match res {
+        let i = match node.keys.binary_search(key) {
             Ok(x) => x,
             Err(x) => {
                 if x == node.key_num {
@@ -128,11 +127,7 @@ impl<K: Ord + Clone + Default> BPlus<K> {
             .resize(new_children.key_num, ChunkHandler::default());
         new_children.children.resize(new_children.key_num + 1, None);
 
-        let not_leaf_const = if !new_children.is_leaf {
-            1
-        } else {
-            0
-        };
+        let not_leaf_const = if !new_children.is_leaf { 1 } else { 0 };
 
         for j in 0..new_children.key_num {
             new_children.keys[j] = children.keys[j + self.t + not_leaf_const].clone();
@@ -153,7 +148,7 @@ impl<K: Ord + Clone + Default> BPlus<K> {
 
         parent.children.push(None);
 
-        for j in parent.key_num..child_index {
+        for j in (child_index + 1..=parent.key_num).rev() {
             parent.children.push(None);
             parent.children[j + 1] = parent.children.swap_remove(j);
         }
@@ -161,7 +156,7 @@ impl<K: Ord + Clone + Default> BPlus<K> {
         parent.children[child_index + 1] = Some(Box::new(new_children));
         parent.keys.push(K::default());
         if child_index != parent.key_num {
-            for j in parent.key_num - 1..=child_index {
+            for j in (child_index..parent.key_num).rev() {
                 parent.keys[j + 1] = parent.keys[j].clone();
             }
         }
@@ -183,9 +178,15 @@ impl<K: Ord + Clone + Default> BPlus<K> {
     }
 
     fn insert_helper(&mut self, node: &mut Box<Node<K>>, key: &K, value: ChunkHandler) {
-        let res = node.keys.binary_search(key);
-        let i = match res {
-            Ok(x) => x + 1,
+        let i = match node.keys.binary_search(key) {
+            Ok(x) => {
+                if node.is_leaf {
+                    node.pointers[x] = value;
+                    return;
+                } else {
+                    x + 1
+                }
+            }
             Err(x) => x,
         };
 
@@ -203,7 +204,7 @@ impl<K: Ord + Clone + Default> BPlus<K> {
             node.keys.push(K::default());
             node.pointers.push(ChunkHandler::default());
             if node.key_num as i32 - 1 >= i as i32 {
-                for j in node.key_num - 1..=i {
+                for j in (i..node.key_num).rev() {
                     node.keys[j + 1] = node.keys[j].clone();
                     node.pointers[j + 1] = node.pointers[j].clone();
                 }
@@ -217,10 +218,6 @@ impl<K: Ord + Clone + Default> BPlus<K> {
 
     pub fn insert(&mut self, key: K, value: Vec<u8>) -> io::Result<()> {
         let mut root = self.root.clone().unwrap();
-        if self.contains(&key) {
-            return Ok(());
-        }
-
         if self.offset >= MAXSIZE {
             self.file_number += 1;
             self.offset = 0;
@@ -290,7 +287,7 @@ impl<K: Ord + Clone + Default> BPlus<K> {
         self.remove_helper(&mut temp, key);
 
         if temp.key_num != self.t - 2 {
-            return
+            return;
         }
 
         if i != 0 {
@@ -406,7 +403,7 @@ mod tests {
         for i in 1..6 {
             let _ = tree.insert(i, vec![i as u8; 1]);
         }
-        
+
         for i in 1..6 {
             let a = tree.get(&i).unwrap();
             assert_eq!(a, vec![i as u8; 1]);
@@ -425,7 +422,6 @@ mod tests {
         tree.remove(&1);
         let a = tree.get(&1);
         assert!(a.is_err());
-
     }
 
     #[test]
@@ -505,7 +501,7 @@ mod tests {
     fn test_large_data() {
         let tempdir = TempDir::new("7").unwrap();
         let path = PathBuf::new().join(tempdir.path());
-        let mut tree: BPlus<usize> = BPlus::new(100, path).unwrap();
+        let mut tree: BPlus<usize> = BPlus::new(2, path).unwrap();
         let mut htable = HashMap::<usize, Vec<u8>>::new();
         for i in 1..10000 {
             let key;
@@ -515,6 +511,54 @@ mod tests {
         }
         for (key, value) in htable {
             assert_eq!(tree.get(&key).unwrap(), value);
+        }
+    }
+
+    #[test]
+    fn test_couple_of_same_keys_inserted() {
+        let tempdir = TempDir::new("8").unwrap();
+        let mut tree: BPlus<usize> = BPlus::new(2, PathBuf::new().join(tempdir.path())).unwrap();
+        for i in 1..100 {
+            tree.insert(i, vec![1u8]).unwrap();
+        }
+
+        for i in 1..100 {
+            for j in 1..100 {
+                tree.insert(i, vec![j as u8]).unwrap();
+            }
+        }
+        for i in 1..100 {
+            for _ in 1..100 {
+                tree.get(&i).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn test_same_keys_inserted() {
+        let tempdir = TempDir::new("10").unwrap();
+        let mut tree: BPlus<usize> = BPlus::new(2, PathBuf::new().join(tempdir.path())).unwrap();
+        let mut keys = vec![];
+        for _ in 1..1000 {
+            let key: usize = rand::random::<usize>() % 10000;
+            keys.push(key);
+        }
+
+        for key in keys.clone() {
+            tree.insert(key, vec![key as u8]).unwrap();
+        }
+
+        for key in keys {
+            println!("{}", key);
+            println!("{:?}", tree.get(&key).unwrap());
+            assert_eq!(vec![key as u8], tree.get(&key).unwrap());
+        }
+
+        let key: usize = rand::random();
+        tree.insert(key, vec![0u8]).unwrap();
+        for i in 1..255 {
+            assert_eq!(vec![i - 1u8], tree.get(&key).unwrap());
+            tree.insert(key, vec![i]).unwrap();
         }
     }
 }
