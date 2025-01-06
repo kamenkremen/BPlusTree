@@ -44,24 +44,18 @@ struct Node<K> {
 
 impl<K: Ord + Clone + Default> Node<K> {
     fn new(is_leaf: bool) -> Self {
-        let new_node = Node {
+        Node {
             is_leaf,
             key_num: 0,
             keys: Vec::new(),
             children: Vec::new(),
             pointers: Vec::new(),
-        };
-        new_node
+        }
     }
 }
 #[allow(dead_code)]
 impl<K: Ord + Clone + Default> BPlus<K> {
     pub fn new(t: usize, path: PathBuf) -> io::Result<Self> {
-        let root = Node::new(true);
-
-        let mut nodes: Vec<Box<Node<K>>> = Vec::new();
-        nodes.push(Box::new(root));
-
         let path_to_file = path.join("0");
         let current_file = File::create(path_to_file)?;
         Ok(Self {
@@ -74,7 +68,7 @@ impl<K: Ord + Clone + Default> BPlus<K> {
         })
     }
 
-    fn find_leaf<'a>(&self, node: &'a Box<Node<K>>, key: &K) -> Option<&'a Box<Node<K>>> {
+    fn find_leaf<'a>(node: &'a Node<K>, key: &K) -> Option<&'a Node<K>> {
         let i = match node.keys.binary_search(key) {
             Ok(x) => x + 1,
             Err(x) => x,
@@ -87,12 +81,12 @@ impl<K: Ord + Clone + Default> BPlus<K> {
                 None
             }
         } else {
-            self.find_leaf(node.children[i].as_ref().unwrap(), key)
+            BPlus::find_leaf(node.children[i].as_ref().unwrap(), key)
         }
     }
 
     pub fn get(&self, key: &K) -> io::Result<Vec<u8>> {
-        let maybe_node = self.find_leaf(self.root.as_ref().unwrap(), key);
+        let maybe_node = BPlus::find_leaf(self.root.as_ref().unwrap(), key);
         let Some(node) = maybe_node else {
             return Err(ErrorKind::NotFound.into());
         };
@@ -171,10 +165,7 @@ impl<K: Ord + Clone + Default> BPlus<K> {
 
     pub fn contains(&self, key: &K) -> bool {
         let result = self.get(key);
-        match result {
-            Ok(_) => true,
-            Err(_) => false,
-        }
+        result.is_ok()
     }
 
     fn insert_helper(&mut self, node: &mut Box<Node<K>>, key: &K, value: ChunkHandler) {
