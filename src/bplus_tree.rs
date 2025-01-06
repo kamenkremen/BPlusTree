@@ -203,7 +203,7 @@ impl<K: Ord + Clone + Default> BPlus<K> {
         } else {
             node.keys.push(K::default());
             node.pointers.push(ChunkHandler::default());
-            if node.key_num as i32 - 1 >= i as i32 {
+            if node.key_num > i {
                 for j in (i..node.key_num).rev() {
                     node.keys[j + 1] = node.keys[j].clone();
                     node.pointers[j + 1] = node.pointers[j].clone();
@@ -313,29 +313,27 @@ impl<K: Ord + Clone + Default> BPlus<K> {
                 node.keys[i - 1] = temp.keys[0].clone();
                 node.children[i - 1] = Some(prev_children);
             }
-        } else {
-            if node.children[i + 1].as_ref().unwrap().key_num == self.t - 1 {
-                node.children.push(None);
-                let mut temp1 = node.children.swap_remove(i + 1).unwrap();
-                self.merge(&mut temp, &mut temp1);
-                node.key_num -= 1;
-                let key_num = node.key_num;
-                for j in 0..key_num {
-                    node.keys[j] = node.keys[j + 1].clone();
-                    node.keys[j] = node.keys[j + 1].clone();
-                }
-                node.keys.resize(key_num, K::default());
-                node.children[i + 1] = Some(temp1);
-            } else {
-                node.children.push(None);
-                let mut prev_children = node.children.swap_remove(i + 1).unwrap();
-                let moved_key = prev_children.keys[0].clone();
-                let moved_value = prev_children.pointers[0].clone();
-                self.insert_helper(&mut temp, &moved_key, moved_value);
-                self.remove_helper(&mut prev_children, &moved_key);
-                node.keys[i] = prev_children.keys[0].clone();
-                node.children[i + 1] = Some(prev_children);
+        } else if node.children[i + 1].as_ref().unwrap().key_num == self.t - 1 {
+            node.children.push(None);
+            let mut temp1 = node.children.swap_remove(i + 1).unwrap();
+            self.merge(&mut temp, &mut temp1);
+            node.key_num -= 1;
+            let key_num = node.key_num;
+            for j in 0..key_num {
+                node.keys[j] = node.keys[j + 1].clone();
+                node.keys[j] = node.keys[j + 1].clone();
             }
+            node.keys.resize(key_num, K::default());
+            node.children[i + 1] = Some(temp1);
+        } else {
+            node.children.push(None);
+            let mut prev_children = node.children.swap_remove(i + 1).unwrap();
+            let moved_key = prev_children.keys[0].clone();
+            let moved_value = prev_children.pointers[0].clone();
+            self.insert_helper(&mut temp, &moved_key, moved_value);
+            self.remove_helper(&mut prev_children, &moved_key);
+            node.keys[i] = prev_children.keys[0].clone();
+            node.children[i + 1] = Some(prev_children);
         }
 
         if temp.key_num == 0 {
