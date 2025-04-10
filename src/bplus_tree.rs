@@ -125,9 +125,8 @@ impl<K: Ord + Clone + Default> BPlus<K> {
         let not_leaf_const = if !new_children.is_leaf { 1 } else { 0 };
 
         for j in 0..new_children.key_num {
-            new_children.keys[j] = mem::replace(
-                &mut children.keys[j + self.t + not_leaf_const],
-                K::default(),
+            new_children.keys[j] = mem::take(
+                &mut children.keys[j + self.t + not_leaf_const]
             );
             if new_children.is_leaf {
                 new_children.pointers[j] = children.pointers[j + self.t + not_leaf_const].clone();
@@ -155,11 +154,11 @@ impl<K: Ord + Clone + Default> BPlus<K> {
         parent.keys.push(K::default());
         if child_index != parent.key_num {
             for j in (child_index..parent.key_num).rev() {
-                parent.keys[j + 1] = mem::replace(&mut parent.keys[j], K::default());
+                parent.keys[j + 1] = mem::take(&mut parent.keys[j]);
             }
         }
         parent.key_num += 1;
-        parent.keys[child_index] = mem::replace(&mut children.keys[self.t], K::default());
+        parent.keys[child_index] = mem::take(&mut children.keys[self.t]);
         let key_num = children.key_num;
         children.keys.resize(key_num, K::default());
         children.pointers.resize(key_num, ChunkHandler::default());
@@ -200,12 +199,13 @@ impl<K: Ord + Clone + Default> BPlus<K> {
             node.pointers.push(ChunkHandler::default());
             if node.key_num > i {
                 for j in (i..node.key_num).rev() {
-                    node.keys[j + 1] = mem::replace(&mut node.keys[j], K::default());
+                    node.keys[j + 1] = mem::take(&mut node.keys[j]);
                     node.pointers[j + 1] =
-                        mem::replace(&mut node.pointers[j], ChunkHandler::default());
+                        mem::take(&mut node.pointers[j]);
                 }
             }
 
+            
             node.keys[i] = key.clone();
             node.pointers[i] = value;
             node.key_num += 1;
