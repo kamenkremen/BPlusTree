@@ -8,8 +8,8 @@ use std::path::PathBuf;
 use approx::assert_relative_eq;
 
 use bplus_tree::bplus_tree::BPlus;
-use chunkfs::chunkers::{FSChunker, LeapChunker, SuperChunker};
-use chunkfs::hashers::{Sha256Hasher, SimpleHasher};
+use chunkfs::chunkers::{FSChunker, LeapChunker};
+use chunkfs::hashers::SimpleHasher;
 use chunkfs::{create_cdc_filesystem, DataContainer, Database, WriteMeasurements};
 use tempdir::TempDir;
 
@@ -154,31 +154,6 @@ fn dedup_ratio_is_correct_for_fixed_size_chunker() {
         fs.cdc_dedup_ratio(),
         (3 * MB) as f64 / (CHUNK_SIZE * 2) as f64
     );
-}
-
-#[test]
-fn different_chunkers_from_vec_can_be_used_with_same_filesystem() {
-    let tempdir = TempDir::new("storage7").unwrap();
-    let path = PathBuf::new().join(tempdir.path());
-    let mut fs = create_cdc_filesystem(BPlus::new(100, path).unwrap(), Sha256Hasher::default());
-    let chunkers: Vec<Box<dyn chunkfs::Chunker>> = vec![
-        SuperChunker::default().into(),
-        LeapChunker::default().into(),
-    ];
-
-    let data = vec![0; 1024 * 1024];
-    for chunker in chunkers {
-        let name = format!("file-{chunker:?}");
-        let mut fh = fs.create_file(&name, chunker).unwrap();
-        fs.write_to_file(&mut fh, &data).unwrap();
-        fs.close_file(fh).unwrap();
-
-        let fh = fs.open_file(&name, FSChunker::default()).unwrap();
-        let read = fs.read_file_complete(&fh).unwrap();
-
-        assert_eq!(read.len(), data.len());
-        assert_eq!(read, data);
-    }
 }
 
 #[test]

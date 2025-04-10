@@ -2,6 +2,7 @@ use crate::chunk_pointer::{ChunkHandler, ChunkPointer};
 use std::{
     fs::File,
     io::{self, ErrorKind},
+    mem,
     os::unix::fs::FileExt,
     path::PathBuf,
 };
@@ -16,7 +17,7 @@ pub struct BPlus<K> {
     /// Parameter responsible for the minimum and maximum number of children
     t: usize,
     /// Root of the tree
-    root: Option<Box<Node<K>>>,
+    root: Box<Node<K>>,
     /// Path to the directory where chunks will be saved
     path: PathBuf,
     /// Number of current file with chunkgs
@@ -60,7 +61,7 @@ impl<K: Ord + Clone + Default> BPlus<K> {
         let current_file = File::create(path_to_file)?;
         Ok(Self {
             t,
-            root: Some(Box::new(Node::new(true))),
+            root: Box::new(Node::new(true)),
             path,
             file_number: 0,
             offset: 0,
@@ -86,7 +87,7 @@ impl<K: Ord + Clone + Default> BPlus<K> {
     }
 
     pub fn get(&self, key: &K) -> io::Result<Vec<u8>> {
-        let maybe_node = BPlus::find_leaf(self.root.as_ref().unwrap(), key);
+        let maybe_node = BPlus::find_leaf(self.root.as_ref(), key);
         let Some(node) = maybe_node else {
             return Err(ErrorKind::NotFound.into());
         };
@@ -107,7 +108,7 @@ impl<K: Ord + Clone + Default> BPlus<K> {
     /// Split one of the children of the node into two
     fn split_children(&mut self, parent: &mut Box<Node<K>>, child_index: usize) {
         parent.children.push(None);
-        let mut children = parent.children.swap_remove(child_index).unwrap().clone();
+        let mut children = parent.children.swap_remove(child_index).unwrap();
         let mut new_children = Node::new(children.is_leaf);
         if new_children.is_leaf {
             new_children.key_num = self.t;
@@ -124,7 +125,10 @@ impl<K: Ord + Clone + Default> BPlus<K> {
         let not_leaf_const = if !new_children.is_leaf { 1 } else { 0 };
 
         for j in 0..new_children.key_num {
-            new_children.keys[j] = children.keys[j + self.t + not_leaf_const].clone();
+            new_children.keys[j] = mem::replace(
+                &mut children.keys[j + self.t + not_leaf_const],
+                K::default(),
+            );
             if new_children.is_leaf {
                 new_children.pointers[j] = children.pointers[j + self.t + not_leaf_const].clone();
             }
@@ -151,11 +155,11 @@ impl<K: Ord + Clone + Default> BPlus<K> {
         parent.keys.push(K::default());
         if child_index != parent.key_num {
             for j in (child_index..parent.key_num).rev() {
-                parent.keys[j + 1] = parent.keys[j].clone();
+                parent.keys[j + 1] = mem::replace(&mut parent.keys[j], K::default());
             }
         }
         parent.key_num += 1;
-        parent.keys[child_index] = children.keys[self.t].clone();
+        parent.keys[child_index] = mem::replace(&mut children.keys[self.t], K::default());
         let key_num = children.key_num;
         children.keys.resize(key_num, K::default());
         children.pointers.resize(key_num, ChunkHandler::default());
@@ -196,8 +200,9 @@ impl<K: Ord + Clone + Default> BPlus<K> {
             node.pointers.push(ChunkHandler::default());
             if node.key_num > i {
                 for j in (i..node.key_num).rev() {
-                    node.keys[j + 1] = node.keys[j].clone();
-                    node.pointers[j + 1] = node.pointers[j].clone();
+                    node.keys[j + 1] = mem::replace(&mut node.keys[j], K::default());
+                    node.pointers[j + 1] =
+                        mem::replace(&mut node.pointers[j], ChunkHandler::default());
                 }
             }
 
@@ -208,7 +213,7 @@ impl<K: Ord + Clone + Default> BPlus<K> {
     }
 
     pub fn insert(&mut self, key: K, value: Vec<u8>) -> io::Result<()> {
-        let mut root = self.root.clone().unwrap();
+        let mut root = self.root.clone();
         if self.offset >= MAXSIZE {
             self.file_number += 1;
             self.offset = 0;
@@ -230,22 +235,22 @@ impl<K: Ord + Clone + Default> BPlus<K> {
             new_root.children.push(Some(root.clone()));
             let mut new_root = Box::new(new_root);
             self.split_children(&mut new_root, 0);
-            self.root = Some(new_root);
+            self.root = new_root;
         }
 
-        self.root = Some(root);
+        self.root = root;
         Ok(())
     }
 
     pub fn remove(&mut self, key: &K) {
-        let mut root = self.root.clone().unwrap();
+        let mut root = self.root.clone();
         self.remove_helper(&mut root, key);
         if root.key_num == 0 && !root.is_leaf {
             let temp = root.children[0].clone();
-            self.root = Some(temp.unwrap());
+            self.root = temp.unwrap();
         }
 
-        self.root = Some(root);
+        self.root = root;
     }
 
     fn remove_helper(&mut self, node: &mut Box<Node<K>>, key: &K) {
