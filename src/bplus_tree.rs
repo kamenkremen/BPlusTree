@@ -4,50 +4,50 @@ use std::{cell::RefCell, io, rc::Rc};
 extern crate chunkfs;
 
 #[allow(dead_code)]
-type Link<K> = Option<Rc<RefCell<dyn Node<K>>>>;
+type Link<K> = Option<Rc<RefCell<Node<K>>>>;
 
 #[allow(dead_code)]
-trait Node<K> {
-    fn insert(&mut self, key: &K, value: Vec<u8>) -> io::Result<()>;
-    fn get(&self, key: &K) -> io::Result<Vec<u8>>;
-    fn remove(&mut self, key: &K) -> io::Result<()>;
-    fn split(&mut self) -> (InternalNode<K>, InternalNode<K>, K);
+#[derive(Clone)]
+enum Node<K> {
+    Internal(InternalNode<K>),
+    Leaf(Leaf<K>),
 }
 
 #[allow(dead_code)]
+#[derive(Clone)]
 struct InternalNode<K> {
     children: Vec<Link<K>>,
     keys: Vec<Rc<K>>,
 }
 
 #[allow(dead_code)]
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct Leaf<K> {
-    pointers: Vec<(Rc<K>, ChunkHandler)>,
+    entries: Vec<(Rc<K>, ChunkHandler)>,
     next: Link<K>,
 }
 
 #[allow(dead_code)]
 struct BPlus<K> {
-    root: Box<dyn Node<K>>,
+    root: Node<K>,
     t: usize,
 }
 
 #[allow(dead_code)]
-impl<K: Default + 'static> BPlus<K> {
+impl<K: Default + Ord + Clone> BPlus<K> {
     fn new(t: usize) -> Self {
         BPlus {
-            root: Box::new(Leaf::default()),
+            root: Node::Leaf(Leaf::default()),
             t,
         }
     }
 
     fn insert(&mut self, key: &K, value: Vec<u8>) -> io::Result<()> {
-        self.root.insert(key, value)
+        self.root.insert(key, value, self.t)
     }
 
     fn remove(&mut self, key: &K) -> io::Result<()> {
-        self.root.remove(key)
+        self.root.remove(key, self.t)
     }
 
     fn get(&self, key: &K) -> io::Result<Vec<u8>> {
@@ -55,35 +55,16 @@ impl<K: Default + 'static> BPlus<K> {
     }
 }
 
-impl<K> Node<K> for Leaf<K> {
-    fn split(&mut self) -> (InternalNode<K>, InternalNode<K>, K) {
+impl<K: Clone + Ord> Node<K> {
+    fn split(&mut self, t: usize) -> (Node<K>, Rc<K>) {
         todo!()
     }
 
-    fn insert(&mut self, key: &K, value: Vec<u8>) -> io::Result<()> {
+    fn insert(&mut self, key: &K, value: Vec<u8>, t: usize) -> io::Result<()> {
         todo!()
     }
 
-    fn remove(&mut self, key: &K) -> io::Result<()> {
-        todo!()
-    }
-
-    fn get(&self, key: &K) -> io::Result<Vec<u8>> {
-        todo!()
-    }
-}
-
-#[allow(dead_code)]
-impl<K> Node<K> for InternalNode<K> {
-    fn split(&mut self) -> (InternalNode<K>, InternalNode<K>, K) {
-        todo!()
-    }
-
-    fn insert(&mut self, key: &K, value: Vec<u8>) -> io::Result<()> {
-        todo!()
-    }
-
-    fn remove(&mut self, key: &K) -> io::Result<()> {
+    fn remove(&mut self, key: &K, t: usize) -> io::Result<()> {
         todo!()
     }
 
