@@ -57,7 +57,34 @@ impl<K: Default + Ord + Clone> BPlus<K> {
 
 impl<K: Clone + Ord> Node<K> {
     fn split(&mut self, t: usize) -> (Node<K>, Rc<K>) {
-        todo!()
+        match self {
+            Node::Leaf(leaf) => {
+                let new_leaf_entries = leaf.entries.split_off(t);
+                let middle_key = new_leaf_entries[0].0.clone();
+
+                let new_leaf = Node::Leaf(Leaf {
+                    entries: new_leaf_entries,
+                    next: leaf.next.take(),
+                });
+
+                leaf.next = Some(Rc::new(RefCell::new(new_leaf.clone())));
+
+                (new_leaf, middle_key)
+            }
+            Node::Internal(internal_node) => {
+                let new_node_keys = internal_node.keys.split_off(t);
+                let middle_key = new_node_keys[0].clone();
+
+                let new_node_children = internal_node.children.split_off(t);
+
+                let new_node = Node::Internal(InternalNode {
+                    children: new_node_children,
+                    keys: new_node_keys,
+                });
+
+                (new_node, middle_key)
+            }
+        }
     }
 
     fn insert(&mut self, key: &K, value: Vec<u8>, t: usize) -> io::Result<()> {
