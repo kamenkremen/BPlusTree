@@ -40,7 +40,7 @@ struct Leaf<K> {
 }
 
 /// B+ tree
-struct BPlus<K> {
+pub struct BPlus<K> {
     root: Node<K>,
     t: usize,
     path: PathBuf,
@@ -82,7 +82,7 @@ impl<K: Default + Ord + Clone + Debug> BPlus<K> {
     /// Creates new instance of B+ tree with given t and path
     /// t represents minimal and maximal quantity of keys in node
     /// All data will be written in files in directory by given path
-    fn new(t: usize, path: PathBuf) -> io::Result<Self> {
+    pub fn new(t: usize, path: PathBuf) -> io::Result<Self> {
         let path_to_file = path.join("0");
         let current_file = File::create(path_to_file)?;
         Ok(Self {
@@ -118,7 +118,7 @@ impl<K: Default + Ord + Clone + Debug> BPlus<K> {
 
     /// Inserts given value by given key in the B+ tree
     /// Returns Err(_) if file could not be created
-    fn insert(&mut self, key: K, value: Vec<u8>) -> io::Result<()> {
+    pub fn insert(&mut self, key: K, value: Vec<u8>) -> io::Result<()> {
         let value_to_insert = self.get_chunk_handler(value).unwrap();
 
         let key = Rc::new(key);
@@ -144,7 +144,7 @@ impl<K: Default + Ord + Clone + Debug> BPlus<K> {
     }
 
     /// Gets value from a B+ tree by given key
-    fn get(&self, key: &K) -> io::Result<Vec<u8>> {
+    pub fn get(&self, key: &K) -> io::Result<Vec<u8>> {
         self.root.get(key)
     }
 }
