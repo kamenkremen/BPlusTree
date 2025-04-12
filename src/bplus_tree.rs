@@ -1,3 +1,5 @@
+use chunkfs::{Data, DataContainer, Database};
+
 use crate::chunk_pointer::{ChunkHandler, ChunkPointer};
 use std::{
     cell::RefCell,
@@ -142,8 +144,7 @@ impl<K: Default + Ord + Clone + Debug> BPlus<K> {
     }
 
     /// Gets value from a B+ tree by given key
-    fn get(&self, key: K) -> io::Result<Vec<u8>> {
-        let key = Rc::new(key);
+    fn get(&self, key: &K) -> io::Result<Vec<u8>> {
         self.root.get(key)
     }
 }
@@ -229,14 +230,14 @@ impl<K: Clone + Ord + Debug> Node<K> {
     }
 
     /// Gets value from a B+ tree by given key
-    fn get(&self, key: Rc<K>) -> io::Result<Vec<u8>> {
+    fn get(&self, key: &K) -> io::Result<Vec<u8>> {
         match self {
-            Node::Leaf(leaf) => match leaf.entries.binary_search_by(|(k, _)| k.cmp(&key)) {
+            Node::Leaf(leaf) => match leaf.entries.binary_search_by(|(k, _)| k.as_ref().cmp(key)) {
                 Ok(pos) => Ok(leaf.entries[pos].1.read().unwrap()),
                 Err(_) => Err(ErrorKind::NotFound.into()),
             },
             Node::Internal(internal_node) => {
-                let pos = match internal_node.keys.binary_search_by(|k| k.cmp(&key)) {
+                let pos = match internal_node.keys.binary_search_by(|k| k.as_ref().cmp(key)) {
                     Ok(x) => x + 1,
                     Err(x) => x,
                 };
@@ -248,6 +249,23 @@ impl<K: Clone + Ord + Debug> Node<K> {
                 }
             }
         }
+    }
+}
+
+impl<K: Ord + Clone + Default + Debug> Database<K, DataContainer<()>> for BPlus<K> {
+    fn insert(&mut self, key: K, value: DataContainer<()>) -> io::Result<()> {
+        match value.extract() {
+            Data::Chunk(chunk) => self.insert(key, chunk.clone()),
+            Data::TargetChunk(_chunk) => unimplemented!(),
+        }
+    }
+
+    fn get(&self, key: &K) -> io::Result<DataContainer<()>> {
+        self.root.get(key).map(DataContainer::from)
+    }
+
+    fn contains(&self, key: &K) -> bool {
+        self.root.get(key).is_ok()
     }
 }
 
@@ -269,7 +287,7 @@ mod tests {
         }
 
         for i in 1..6 {
-            let a = tree.get(i).unwrap();
+            let a = tree.get(&i).unwrap();
             assert_eq!(a, vec![i as u8; 1]);
         }
     }
@@ -284,7 +302,7 @@ mod tests {
         }
 
         for i in 1..255 {
-            assert_eq!(tree.get(i as usize).unwrap(), vec![i as u8; 1]);
+            assert_eq!(tree.get(&(i as usize)).unwrap(), vec![i as u8; 1]);
         }
     }
 
@@ -297,7 +315,7 @@ mod tests {
             let _ = tree.insert(i, vec![i as u8; 1064]);
         }
         for i in 1..10000 {
-            let a = tree.get(i).unwrap();
+            let a = tree.get(&i).unwrap();
             assert_eq!(a, vec![i as u8; 1064]);
         }
     }
@@ -315,7 +333,7 @@ mod tests {
             htable.insert(key, vec![key as u8; 1064]);
         }
         for (key, value) in htable {
-            assert_eq!(tree.get(key).unwrap(), value);
+            assert_eq!(tree.get(&key).unwrap(), value);
         }
     }
 
@@ -334,7 +352,7 @@ mod tests {
         }
         for i in 1..100 {
             for _ in 1..100 {
-                tree.get(i).unwrap();
+                tree.get(&i).unwrap();
             }
         }
     }
@@ -354,13 +372,13 @@ mod tests {
         }
 
         for key in keys {
-            assert_eq!(vec![key as u8], tree.get(key).unwrap());
+            assert_eq!(vec![key as u8], tree.get(&key).unwrap());
         }
 
         let key: usize = rand::random();
         tree.insert(key, vec![0u8]).unwrap();
         for i in 1..255 {
-            assert_eq!(vec![i - 1u8], tree.get(key).unwrap());
+            assert_eq!(vec![i - 1u8], tree.get(&key).unwrap());
             tree.insert(key, vec![i]).unwrap();
         }
     }
