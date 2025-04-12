@@ -1,6 +1,7 @@
 use crate::chunk_pointer::{ChunkHandler, ChunkPointer};
 use std::{
     cell::RefCell,
+    fmt::Debug,
     fs::File,
     io::{self, ErrorKind},
     os::unix::fs::FileExt,
@@ -45,8 +46,34 @@ struct BPlus<K> {
     max_file_size: u64,
 }
 
-#[allow(dead_code, unused_variables)]
-impl<K: Default + Ord + Clone> BPlus<K> {
+#[allow(dead_code)]
+impl<K: Ord + Debug> BPlus<K> {
+    pub fn print_tree(&self) {
+        BPlus::print_node(&self.root, 0);
+    }
+
+    fn print_node(node: &Node<K>, level: usize) {
+        match node {
+            Node::Internal(internal) => {
+                println!("{}[Internal] keys: {:?}", "  ".repeat(level), internal.keys);
+                for child in internal.children.iter().flatten() {
+                    BPlus::print_node(&child.borrow(), level + 1);
+                }
+            }
+            Node::Leaf(leaf) => {
+                let entries: Vec<String> = leaf
+                    .entries
+                    .iter()
+                    .map(|(k, _)| format!("{:?}", k))
+                    .collect();
+                println!("{}[Leaf] entries: {:?}", "  ".repeat(level), entries);
+            }
+        }
+    }
+}
+
+#[allow(dead_code)]
+impl<K: Default + Ord + Clone + Debug> BPlus<K> {
     fn new(t: usize, path: PathBuf) -> io::Result<Self> {
         let path_to_file = path.join("0");
         let current_file = File::create(path_to_file)?;
@@ -80,8 +107,10 @@ impl<K: Default + Ord + Clone> BPlus<K> {
         Ok(value_to_insert)
     }
 
-    fn insert(&mut self, key: Rc<K>, value: Vec<u8>) -> io::Result<()> {
+    fn insert(&mut self, key: K, value: Vec<u8>) -> io::Result<()> {
         let value_to_insert = self.get_chunk_handler(value).unwrap();
+
+        let key = Rc::new(key);
 
         if let Some((new_node, new_key)) = self.root.insert(key, value_to_insert, self.t) {
             {
@@ -98,16 +127,18 @@ impl<K: Default + Ord + Clone> BPlus<K> {
         Ok(())
     }
 
+    #[allow(unused_variables)]
     fn remove(&mut self, key: Rc<K>) -> io::Result<()> {
-        todo!()
+        unimplemented!()
     }
 
-    fn get(&self, key: Rc<K>) -> io::Result<Vec<u8>> {
+    fn get(&self, key: K) -> io::Result<Vec<u8>> {
+        let key = Rc::new(key);
         self.root.get(key)
     }
 }
 
-impl<K: Clone + Ord> Node<K> {
+impl<K: Clone + Ord + Debug> Node<K> {
     fn split(&mut self, t: usize) -> (Node<K>, Rc<K>) {
         match self {
             Node::Leaf(leaf) => {
@@ -124,8 +155,8 @@ impl<K: Clone + Ord> Node<K> {
                 (new_leaf, middle_key)
             }
             Node::Internal(internal_node) => {
-                let new_node_keys = internal_node.keys.split_off(t);
-                let middle_key = new_node_keys[0].clone();
+                let mut new_node_keys = internal_node.keys.split_off(t - 1);
+                let middle_key = new_node_keys.remove(0);
 
                 let new_node_children = internal_node.children.split_off(t);
 
@@ -142,11 +173,11 @@ impl<K: Clone + Ord> Node<K> {
     fn insert(&mut self, key: Rc<K>, value: ChunkHandler, t: usize) -> Option<(Node<K>, Rc<K>)> {
         match self {
             Node::Leaf(leaf) => {
-                let pos = leaf
-                    .entries
-                    .binary_search_by(|(k, _)| k.cmp(&key))
-                    .unwrap_or_else(|e| e);
-                leaf.entries.insert(pos, (key.clone(), value));
+                match leaf.entries.binary_search_by(|(k, _)| k.cmp(&key)) {
+                    Ok(x) => leaf.entries[x] = (key.clone(), value),
+                    Err(x) => leaf.entries.insert(x, (key.clone(), value)),
+                };
+
                 if leaf.entries.len() == 2 * t {
                     return Some(self.split(t));
                 }
@@ -154,7 +185,10 @@ impl<K: Clone + Ord> Node<K> {
                 None
             }
             Node::Internal(internal_node) => {
-                let pos = internal_node.keys.binary_search(&key).unwrap_or_else(|e| e);
+                let pos = match internal_node.keys.binary_search(&key) {
+                    Ok(x) => x + 1,
+                    Err(x) => x,
+                };
                 let child = internal_node.children[pos].clone().unwrap();
                 let mut borrowed_child = child.borrow_mut();
                 let result = borrowed_child.insert(key, value, t);
@@ -167,7 +201,7 @@ impl<K: Clone + Ord> Node<K> {
                             .insert(pos + 1, Some(Rc::new(RefCell::new(new_child))));
 
                         match internal_node.keys.len() {
-                            val if val == 2 * t => Some(self.split(t)),
+                            val if val == 2 * t - 1 => Some(self.split(t)),
                             _ => None,
                         }
                     }
@@ -179,7 +213,7 @@ impl<K: Clone + Ord> Node<K> {
 
     #[allow(unused_variables, dead_code)]
     fn remove(&mut self, key: &K, t: usize) -> io::Result<()> {
-        todo!()
+        unimplemented!()
     }
 
     fn get(&self, key: Rc<K>) -> io::Result<Vec<u8>> {
@@ -189,16 +223,132 @@ impl<K: Clone + Ord> Node<K> {
                 Err(_) => Err(ErrorKind::NotFound.into()),
             },
             Node::Internal(internal_node) => {
-                let pos = internal_node
-                    .keys
-                    .binary_search_by(|k| k.cmp(&key))
-                    .unwrap_or_else(|e| e);
+                let pos = match internal_node.keys.binary_search_by(|k| k.cmp(&key)) {
+                    Ok(x) => x + 1,
+                    Err(x) => x,
+                };
+
                 let child = internal_node.children.get(pos);
                 match child {
                     Some(x) => x.clone().unwrap().borrow().get(key),
                     None => Err(ErrorKind::NotFound.into()),
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use tempdir::TempDir;
+
+    use super::*;
+
+    #[test]
+    fn test_insert_and_find() {
+        let tempdir = TempDir::new("1").unwrap();
+        let path = PathBuf::new().join(tempdir.path());
+        let mut tree: BPlus<usize> = BPlus::new(2, path).unwrap();
+        for i in 1..6 {
+            let _ = tree.insert(i, vec![i as u8; 1]);
+        }
+
+        for i in 1..6 {
+            let a = tree.get(i).unwrap();
+            assert_eq!(a, vec![i as u8; 1]);
+        }
+    }
+
+    #[test]
+    fn test_insert_and_find_many_nodes() {
+        let tempdir = TempDir::new("4").unwrap();
+        let path = PathBuf::new().join(tempdir.path());
+        let mut tree: BPlus<usize> = BPlus::new(2, path).unwrap();
+        for i in 1..255 {
+            let _ = tree.insert(i, vec![i as u8; 1]);
+        }
+
+        for i in 1..255 {
+            assert_eq!(tree.get(i as usize).unwrap(), vec![i as u8; 1]);
+        }
+    }
+
+    #[test]
+    fn test_large_data_consecutive_numbers() {
+        let tempdir = TempDir::new("6").unwrap();
+        let path = PathBuf::new().join(tempdir.path());
+        let mut tree: BPlus<usize> = BPlus::new(100, path).unwrap();
+        for i in 1..10000 {
+            let _ = tree.insert(i, vec![i as u8; 1064]);
+        }
+        for i in 1..10000 {
+            let a = tree.get(i).unwrap();
+            assert_eq!(a, vec![i as u8; 1064]);
+        }
+    }
+
+    #[test]
+    fn test_large_data() {
+        let tempdir = TempDir::new("7").unwrap();
+        let path = PathBuf::new().join(tempdir.path());
+        let mut tree: BPlus<usize> = BPlus::new(2, path).unwrap();
+        let mut htable = HashMap::<usize, Vec<u8>>::new();
+        for i in 1..10000 {
+            let key;
+            key = i * 113;
+            let _ = tree.insert(key, vec![key as u8; 1064]);
+            htable.insert(key, vec![key as u8; 1064]);
+        }
+        for (key, value) in htable {
+            assert_eq!(tree.get(key).unwrap(), value);
+        }
+    }
+
+    #[test]
+    fn test_couple_of_same_keys_inserted() {
+        let tempdir = TempDir::new("8").unwrap();
+        let mut tree: BPlus<usize> = BPlus::new(2, PathBuf::new().join(tempdir.path())).unwrap();
+        for i in 1..100 {
+            tree.insert(i, vec![1u8]).unwrap();
+        }
+
+        for i in 1..100 {
+            for j in 1..100 {
+                tree.insert(i, vec![j as u8]).unwrap();
+            }
+        }
+        for i in 1..100 {
+            for _ in 1..100 {
+                tree.get(i).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn test_same_keys_inserted() {
+        let tempdir = TempDir::new("10").unwrap();
+        let mut tree: BPlus<usize> = BPlus::new(2, PathBuf::new().join(tempdir.path())).unwrap();
+        let mut keys = vec![];
+        for _ in 1..1000 {
+            let key: usize = rand::random::<usize>() % 10000;
+            keys.push(key);
+        }
+
+        for key in keys.clone() {
+            tree.insert(key, vec![key as u8]).unwrap();
+        }
+
+        for key in keys {
+            assert_eq!(vec![key as u8], tree.get(key).unwrap());
+        }
+
+        let key: usize = rand::random();
+        tree.insert(key, vec![0u8]).unwrap();
+        for i in 1..255 {
+            assert_eq!(vec![i - 1u8], tree.get(key).unwrap());
+            tree.insert(key, vec![i]).unwrap();
         }
     }
 }
