@@ -11,7 +11,7 @@ use std::{
 
 extern crate chunkfs;
 
-type Link<K> = Option<Rc<RefCell<Node<K>>>>;
+type Link<K> = Rc<RefCell<Node<K>>>;
 
 #[derive(Clone)]
 enum Node<K> {
@@ -28,7 +28,7 @@ struct InternalNode<K> {
 #[derive(Default, Clone)]
 struct Leaf<K> {
     entries: Vec<(Rc<K>, ChunkHandler)>,
-    next: Link<K>,
+    next: Option<Link<K>>,
 }
 
 struct BPlus<K> {
@@ -51,7 +51,7 @@ impl<K: Ord + Debug> BPlus<K> {
         match node {
             Node::Internal(internal) => {
                 println!("{}[Internal] keys: {:?}", "  ".repeat(level), internal.keys);
-                for child in internal.children.iter().flatten() {
+                for child in &internal.children {
                     BPlus::print_node(&child.borrow(), level + 1);
                 }
             }
@@ -111,8 +111,8 @@ impl<K: Default + Ord + Clone + Debug> BPlus<K> {
             {
                 let new_root = Node::<K>::Internal(InternalNode {
                     children: vec![
-                        Some(Rc::new(RefCell::new(self.root.clone()))),
-                        Some(Rc::new(RefCell::new(new_node))),
+                        Rc::new(RefCell::new(self.root.clone())),
+                        Rc::new(RefCell::new(new_node)),
                     ],
                     keys: vec![new_key],
                 });
@@ -184,7 +184,7 @@ impl<K: Clone + Ord + Debug> Node<K> {
                     Ok(x) => x + 1,
                     Err(x) => x,
                 };
-                let child = internal_node.children[pos].clone().unwrap();
+                let child = internal_node.children[pos].clone();
                 let mut borrowed_child = child.borrow_mut();
                 let result = borrowed_child.insert(key, value, t);
 
@@ -193,7 +193,7 @@ impl<K: Clone + Ord + Debug> Node<K> {
                         internal_node.keys.insert(pos, key.clone());
                         internal_node
                             .children
-                            .insert(pos + 1, Some(Rc::new(RefCell::new(new_child))));
+                            .insert(pos + 1, Rc::new(RefCell::new(new_child)));
 
                         match internal_node.keys.len() {
                             val if val == 2 * t - 1 => Some(self.split(t)),
@@ -225,7 +225,7 @@ impl<K: Clone + Ord + Debug> Node<K> {
 
                 let child = internal_node.children.get(pos);
                 match child {
-                    Some(x) => x.clone().unwrap().borrow().get(key),
+                    Some(x) => x.clone().borrow().get(key),
                     None => Err(ErrorKind::NotFound.into()),
                 }
             }
