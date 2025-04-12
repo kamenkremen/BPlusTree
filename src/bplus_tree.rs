@@ -278,6 +278,84 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_non_existent_key() {
+        let tempdir = TempDir::new("non_existent").unwrap();
+        let mut tree: BPlus<usize> = BPlus::new(2, tempdir.path().into()).unwrap();
+        tree.insert(1, vec![1]).unwrap();
+        assert!(tree.get(&2).is_err());
+    }
+
+    #[test]
+    fn test_node_split_leaf() {
+        let tempdir = TempDir::new("split_leaf").unwrap();
+        let mut tree: BPlus<usize> = BPlus::new(2, tempdir.path().into()).unwrap();
+
+        for i in 1..5 {
+            tree.insert(i, vec![i as u8]).unwrap();
+        }
+
+        if let Node::Internal(root) = &tree.root {
+            assert_eq!(root.keys.len(), 1);
+            assert_eq!(root.children.len(), 2);
+        } else {
+            assert!(false);
+        }
+    }
+
+    #[test]
+    fn test_overwrite_existing_key() {
+        let tempdir = TempDir::new("overwrite").unwrap();
+        let mut tree: BPlus<usize> = BPlus::new(2, tempdir.path().into()).unwrap();
+
+        tree.insert(1, vec![1]).unwrap();
+        tree.insert(1, vec![42]).unwrap();
+
+        assert_eq!(tree.get(&1).unwrap(), vec![42]);
+    }
+
+    #[test]
+    fn test_file_rotation() {
+        let tempdir = TempDir::new("file_rotation").unwrap();
+        let mut tree = BPlus::new(2, tempdir.path().into()).unwrap();
+        tree.max_file_size = 128;
+
+        let data = vec![0; 200];
+        tree.insert(1, data).unwrap();
+
+        let small_data = vec![0; 10];
+        tree.insert(2, small_data).unwrap();
+
+        assert_eq!(tree.file_number, 1);
+        assert_eq!(tree.offset, 10);
+    }
+
+    #[test]
+    fn test_leaf_linking() {
+        let tempdir = TempDir::new("leaf_link").unwrap();
+        let mut tree: BPlus<usize> = BPlus::new(2, tempdir.path().into()).unwrap();
+
+        for i in 1..10 {
+            tree.insert(i, vec![i as u8]).unwrap();
+        }
+
+        // Проверка связей между листьями
+        if let Node::Leaf(first_leaf) = &tree.root {
+            let mut current = Some(Rc::clone(first_leaf.next.as_ref().unwrap()));
+            let mut collected = vec![];
+
+            while let Some(leaf) = current.clone() {
+                let borrowed = leaf.borrow();
+                if let Node::Leaf(leaf) = &*borrowed {
+                    collected.extend(leaf.entries.iter().map(|(k, _)| **k));
+                    current = leaf.next.as_ref().map(Rc::clone);
+                }
+            }
+
+            assert_eq!(collected, (5..10).collect::<Vec<_>>());
+        }
+    }
+
+    #[test]
     fn test_insert_and_find() {
         let tempdir = TempDir::new("1").unwrap();
         let path = PathBuf::new().join(tempdir.path());
