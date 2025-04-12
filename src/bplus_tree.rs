@@ -11,31 +11,26 @@ use std::{
 
 extern crate chunkfs;
 
-#[allow(dead_code)]
 type Link<K> = Option<Rc<RefCell<Node<K>>>>;
 
-#[allow(dead_code)]
 #[derive(Clone)]
 enum Node<K> {
     Internal(InternalNode<K>),
     Leaf(Leaf<K>),
 }
 
-#[allow(dead_code)]
 #[derive(Clone)]
 struct InternalNode<K> {
     children: Vec<Link<K>>,
     keys: Vec<Rc<K>>,
 }
 
-#[allow(dead_code)]
 #[derive(Default, Clone)]
 struct Leaf<K> {
     entries: Vec<(Rc<K>, ChunkHandler)>,
     next: Link<K>,
 }
 
-#[allow(dead_code)]
 struct BPlus<K> {
     root: Node<K>,
     t: usize,
