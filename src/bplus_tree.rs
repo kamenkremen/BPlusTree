@@ -11,26 +11,33 @@ use std::{
 
 extern crate chunkfs;
 
+/// A type that represents a reference to another node
 type Link<K> = Rc<RefCell<Node<K>>>;
 
+/// Represents a node in a B+ tree.
+/// All data resides in leaf nodes, while internal nodes
+/// manage navigation between children
 #[derive(Clone)]
 enum Node<K> {
     Internal(InternalNode<K>),
     Leaf(Leaf<K>),
 }
 
+/// Internal node in a B+ tree
 #[derive(Clone)]
 struct InternalNode<K> {
     children: Vec<Link<K>>,
     keys: Vec<Rc<K>>,
 }
 
+/// Leaf node in a B+ tree
 #[derive(Default, Clone)]
 struct Leaf<K> {
     entries: Vec<(Rc<K>, ChunkHandler)>,
     next: Option<Link<K>>,
 }
 
+/// B+ tree
 struct BPlus<K> {
     root: Node<K>,
     t: usize,
@@ -43,6 +50,7 @@ struct BPlus<K> {
 
 #[allow(dead_code)]
 impl<K: Ord + Debug> BPlus<K> {
+    /// Prints B+ tree for debug purposes
     pub fn print_tree(&self) {
         BPlus::print_node(&self.root, 0);
     }
@@ -69,6 +77,9 @@ impl<K: Ord + Debug> BPlus<K> {
 
 #[allow(dead_code)]
 impl<K: Default + Ord + Clone + Debug> BPlus<K> {
+    /// Creates new instance of B+ tree with given t and path
+    /// t represents minimal and maximal quantity of keys in node
+    /// All data will be written in files in directory by given path
     fn new(t: usize, path: PathBuf) -> io::Result<Self> {
         let path_to_file = path.join("0");
         let current_file = File::create(path_to_file)?;
@@ -83,6 +94,7 @@ impl<K: Default + Ord + Clone + Debug> BPlus<K> {
         })
     }
 
+    /// Creates new chunk_handler and writes data to a file
     fn get_chunk_handler(&mut self, value: Vec<u8>) -> io::Result<ChunkHandler> {
         if self.offset >= self.max_file_size {
             self.file_number += 1;
@@ -102,6 +114,8 @@ impl<K: Default + Ord + Clone + Debug> BPlus<K> {
         Ok(value_to_insert)
     }
 
+    /// Inserts given value by given key in the B+ tree
+    /// Returns Err(_) if file could not be created
     fn insert(&mut self, key: K, value: Vec<u8>) -> io::Result<()> {
         let value_to_insert = self.get_chunk_handler(value).unwrap();
 
@@ -127,6 +141,7 @@ impl<K: Default + Ord + Clone + Debug> BPlus<K> {
         unimplemented!()
     }
 
+    /// Gets value from a B+ tree by given key
     fn get(&self, key: K) -> io::Result<Vec<u8>> {
         let key = Rc::new(key);
         self.root.get(key)
@@ -134,6 +149,7 @@ impl<K: Default + Ord + Clone + Debug> BPlus<K> {
 }
 
 impl<K: Clone + Ord + Debug> Node<K> {
+    /// Splits node into two and returns new node with it first key
     fn split(&mut self, t: usize) -> (Node<K>, Rc<K>) {
         match self {
             Node::Leaf(leaf) => {
@@ -165,6 +181,7 @@ impl<K: Clone + Ord + Debug> Node<K> {
         }
     }
 
+    /// Inserts given value by given key
     fn insert(&mut self, key: Rc<K>, value: ChunkHandler, t: usize) -> Option<(Node<K>, Rc<K>)> {
         match self {
             Node::Leaf(leaf) => {
@@ -211,6 +228,7 @@ impl<K: Clone + Ord + Debug> Node<K> {
         unimplemented!()
     }
 
+    /// Gets value from a B+ tree by given key
     fn get(&self, key: Rc<K>) -> io::Result<Vec<u8>> {
         match self {
             Node::Leaf(leaf) => match leaf.entries.binary_search_by(|(k, _)| k.cmp(&key)) {
