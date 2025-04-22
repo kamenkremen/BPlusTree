@@ -2,7 +2,13 @@ use chunkfs::{Data, DataContainer, Database};
 
 use crate::chunk_pointer::{ChunkHandler, ChunkPointer};
 use std::{
-    cell::RefCell, fmt::Debug, fs::File, io::{self, ErrorKind}, os::unix::fs::FileExt, path::PathBuf, rc::Rc
+    cell::RefCell,
+    fmt::Debug,
+    fs::File,
+    io::{self, ErrorKind},
+    os::unix::fs::FileExt,
+    path::PathBuf,
+    rc::Rc,
 };
 
 extern crate chunkfs;
@@ -263,6 +269,7 @@ impl<K: Ord + Clone + Default + Debug> Database<K, DataContainer<()>> for BPlus<
     }
 }
 
+/// Iterator for B+ tree
 pub struct BPlusIterator<K> {
     current_leaf: Option<Rc<RefCell<Node<K>>>>,
     current_index: usize,
@@ -270,7 +277,7 @@ pub struct BPlusIterator<K> {
 
 impl<K: Ord + Clone + Debug> Iterator for BPlusIterator<K> {
     type Item = (K, Vec<u8>);
-    
+
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             let current = self.current_leaf.as_ref()?.borrow().clone();
@@ -315,7 +322,7 @@ impl<K: Ord + Clone + Default + Debug> IntoIterator for BPlus<K> {
                 Node::Leaf(_) => break,
             }
         }
-        
+
         BPlusIterator {
             current_leaf: current,
             current_index: 0,
@@ -518,7 +525,7 @@ mod tests {
     fn test_iterator() {
         let tempdir = TempDir::new("iterator_test").unwrap();
         let mut tree: BPlus<usize> = BPlus::new(2, tempdir.path().into()).unwrap();
-        
+
         for i in 1..5 {
             tree.insert(i, vec![i as u8]).unwrap();
         }
