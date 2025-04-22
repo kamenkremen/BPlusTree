@@ -2,13 +2,7 @@ use chunkfs::{Data, DataContainer, Database};
 
 use crate::chunk_pointer::{ChunkHandler, ChunkPointer};
 use std::{
-    cell::RefCell,
-    fmt::Debug,
-    fs::File,
-    io::{self, ErrorKind},
-    os::unix::fs::FileExt,
-    path::PathBuf,
-    rc::Rc,
+    cell::RefCell, fmt::Debug, fs::File, io::{self, ErrorKind}, os::unix::fs::FileExt, path::PathBuf, rc::Rc
 };
 
 extern crate chunkfs;
@@ -269,6 +263,66 @@ impl<K: Ord + Clone + Default + Debug> Database<K, DataContainer<()>> for BPlus<
     }
 }
 
+pub struct BPlusIterator<K> {
+    current_leaf: Option<Rc<RefCell<Node<K>>>>,
+    current_index: usize,
+}
+
+impl<K: Ord + Clone + Debug> Iterator for BPlusIterator<K> {
+    type Item = (K, Vec<u8>);
+    
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let current = self.current_leaf.as_ref()?.borrow().clone();
+            if let Node::Leaf(leaf) = current {
+                if self.current_index < leaf.entries.len() {
+                    let (key, handler) = &leaf.entries[self.current_index];
+                    let value = handler.read().ok()?;
+                    let key = Rc::unwrap_or_clone(key.clone());
+                    self.current_index += 1;
+                    return Some((key, value));
+                } else {
+                    match &leaf.next {
+                        Some(next_leaf) => {
+                            self.current_leaf = Some(Rc::clone(next_leaf));
+                            self.current_index = 0;
+                        }
+                        None => {
+                            self.current_leaf = None;
+                            return None;
+                        }
+                    }
+                }
+            } else {
+                return None;
+            }
+        }
+    }
+}
+
+impl<K: Ord + Clone + Default + Debug> IntoIterator for BPlus<K> {
+    type Item = (K, Vec<u8>);
+    type IntoIter = BPlusIterator<K>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        let mut current = Some(Rc::new(RefCell::new(self.root)));
+        while let Some(node) = current.clone() {
+            let borrowed = node.borrow();
+            match &*borrowed {
+                Node::Internal(internal) => {
+                    current = Some(Rc::clone(&internal.children[0]));
+                }
+                Node::Leaf(_) => break,
+            }
+        }
+        
+        BPlusIterator {
+            current_leaf: current,
+            current_index: 0,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -338,7 +392,6 @@ mod tests {
             tree.insert(i, vec![i as u8]).unwrap();
         }
 
-        // Проверка связей между листьями
         if let Node::Leaf(first_leaf) = &tree.root {
             let mut current = Some(Rc::clone(first_leaf.next.as_ref().unwrap()));
             let mut collected = vec![];
@@ -459,5 +512,22 @@ mod tests {
             assert_eq!(vec![i - 1u8], tree.get(&key).unwrap());
             tree.insert(key, vec![i]).unwrap();
         }
+    }
+
+    #[test]
+    fn test_iterator() {
+        let tempdir = TempDir::new("iterator_test").unwrap();
+        let mut tree: BPlus<usize> = BPlus::new(2, tempdir.path().into()).unwrap();
+        
+        for i in 1..5 {
+            tree.insert(i, vec![i as u8]).unwrap();
+        }
+
+        let mut iter = tree.into_iter();
+        assert_eq!(iter.next(), Some((1, vec![1])));
+        assert_eq!(iter.next(), Some((2, vec![2])));
+        assert_eq!(iter.next(), Some((3, vec![3])));
+        assert_eq!(iter.next(), Some((4, vec![4])));
+        assert_eq!(iter.next(), None);
     }
 }
