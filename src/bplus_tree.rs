@@ -123,15 +123,19 @@ impl<K: Default + Ord + Clone + Debug> BPlus<K> {
 
         let key = Rc::new(key);
 
-        if let Some((new_node, new_key)) = self.root.insert(key, value_to_insert, self.t) {
+        if let Some((new_node_link, new_key)) = self.root.insert(key, value_to_insert, self.t) {
             {
+                let mut prev_root = self.root.clone();
+                if let Node::Leaf(mut leaf) = prev_root {
+                    leaf.next = Some(new_node_link.clone());
+                    prev_root = Node::Leaf(leaf);
+                }
+
                 let new_root = Node::<K>::Internal(InternalNode {
-                    children: vec![
-                        Rc::new(RefCell::new(self.root.clone())),
-                        Rc::new(RefCell::new(new_node)),
-                    ],
+                    children: vec![Rc::new(RefCell::new(prev_root)), new_node_link],
                     keys: vec![new_key],
                 });
+
                 self.root = new_root;
             }
         }
@@ -151,7 +155,7 @@ impl<K: Default + Ord + Clone + Debug> BPlus<K> {
 
 impl<K: Clone + Ord + Debug> Node<K> {
     /// Splits node into two and returns new node with it first key
-    fn split(&mut self, t: usize) -> (Node<K>, Rc<K>) {
+    fn split(&mut self, t: usize) -> (Link<K>, Rc<K>) {
         match self {
             Node::Leaf(leaf) => {
                 let new_leaf_entries = leaf.entries.split_off(t);
@@ -162,9 +166,10 @@ impl<K: Clone + Ord + Debug> Node<K> {
                     next: leaf.next.take(),
                 });
 
-                leaf.next = Some(Rc::new(RefCell::new(new_leaf.clone())));
+                let new_leaf_link = Rc::new(RefCell::new(new_leaf.clone()));
+                leaf.next = Some(new_leaf_link.clone());
 
-                (new_leaf, middle_key)
+                (new_leaf_link, middle_key)
             }
             Node::Internal(internal_node) => {
                 let mut new_node_keys = internal_node.keys.split_off(t - 1);
@@ -177,13 +182,13 @@ impl<K: Clone + Ord + Debug> Node<K> {
                     keys: new_node_keys,
                 });
 
-                (new_node, middle_key)
+                (Rc::new(RefCell::new(new_node)), middle_key)
             }
         }
     }
 
     /// Inserts given value by given key
-    fn insert(&mut self, key: Rc<K>, value: ChunkHandler, t: usize) -> Option<(Node<K>, Rc<K>)> {
+    fn insert(&mut self, key: Rc<K>, value: ChunkHandler, t: usize) -> Option<(Link<K>, Rc<K>)> {
         match self {
             Node::Leaf(leaf) => {
                 match leaf.entries.binary_search_by(|(k, _)| k.cmp(&key)) {
@@ -209,9 +214,7 @@ impl<K: Clone + Ord + Debug> Node<K> {
                 match result {
                     Some((new_child, key)) => {
                         internal_node.keys.insert(pos, key.clone());
-                        internal_node
-                            .children
-                            .insert(pos + 1, Rc::new(RefCell::new(new_child)));
+                        internal_node.children.insert(pos + 1, new_child);
 
                         match internal_node.keys.len() {
                             val if val == 2 * t - 1 => Some(self.split(t)),
@@ -295,6 +298,7 @@ impl<K: Ord + Clone + Debug> Iterator for BPlusIterator<K> {
                             self.current_index = 0;
                         }
                         None => {
+                            println!("erm");
                             self.current_leaf = None;
                             return None;
                         }
@@ -334,6 +338,7 @@ impl<K: Ord + Clone + Default + Debug> IntoIterator for BPlus<K> {
 mod tests {
     use std::collections::HashMap;
 
+    use rand::seq::SliceRandom;
     use tempdir::TempDir;
 
     use super::*;
@@ -395,24 +400,39 @@ mod tests {
         let tempdir = TempDir::new("leaf_link").unwrap();
         let mut tree: BPlus<usize> = BPlus::new(2, tempdir.path().into()).unwrap();
 
-        for i in 1..10 {
+        for i in 1..=9 {
             tree.insert(i, vec![i as u8]).unwrap();
         }
 
-        if let Node::Leaf(first_leaf) = &tree.root {
-            let mut current = Some(Rc::clone(first_leaf.next.as_ref().unwrap()));
-            let mut collected = vec![];
+        let mut current = Some(Rc::new(RefCell::new(tree.root)));
+        while let Some(node) = current.clone() {
+            let borrowed = node.borrow();
+            match &*borrowed {
+                Node::Internal(internal) => {
+                    current = Some(Rc::clone(&internal.children[0]));
+                }
+                Node::Leaf(_) => break,
+            }
+        }
 
-            while let Some(leaf) = current.clone() {
-                let borrowed = leaf.borrow();
-                if let Node::Leaf(leaf) = &*borrowed {
+        let mut collected = vec![];
+        if let Node::Leaf(first_leaf) = &*current.clone().as_ref().unwrap().borrow() {
+            let mut current_leaf = Some(Rc::new(RefCell::new(Node::Leaf(first_leaf.clone()))));
+
+            while let Some(leaf_ref) = current_leaf {
+                let leaf_guard = leaf_ref.borrow();
+
+                if let Node::Leaf(leaf) = &*leaf_guard {
                     collected.extend(leaf.entries.iter().map(|(k, _)| **k));
-                    current = leaf.next.as_ref().map(Rc::clone);
+                    current_leaf = leaf.next.as_ref().map(|next| Rc::clone(next));
+                } else {
+                    break;
                 }
             }
-
-            assert_eq!(collected, (5..10).collect::<Vec<_>>());
         }
+
+        assert_eq!(collected, (1..=9).collect::<Vec<_>>());
+        assert_eq!(collected.len(), 9);
     }
 
     #[test]
@@ -536,5 +556,208 @@ mod tests {
         assert_eq!(iter.next(), Some((3, vec![3])));
         assert_eq!(iter.next(), Some((4, vec![4])));
         assert_eq!(iter.next(), None);
+    }
+    #[test]
+    fn test_empty_tree() {
+        let tempdir = TempDir::new("empty").unwrap();
+        let tree: BPlus<usize> = BPlus::new(2, tempdir.path().into()).unwrap();
+        assert!(tree.get(&1).is_err());
+    }
+
+    #[test]
+    fn test_single_entry() {
+        let tempdir = TempDir::new("single").unwrap();
+        let mut tree = BPlus::new(2, tempdir.path().into()).unwrap();
+        tree.insert(42, vec![1, 2, 3]).unwrap();
+        assert_eq!(tree.get(&42).unwrap(), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_reverse_order_insert() {
+        let tempdir = TempDir::new("reverse").unwrap();
+        let mut tree: BPlus<usize> = BPlus::new(3, tempdir.path().into()).unwrap();
+
+        for i in (1..100).rev() {
+            tree.insert(i, vec![i as u8]).unwrap();
+        }
+
+        for i in 1..100 {
+            assert_eq!(tree.get(&i).unwrap(), vec![i as u8]);
+        }
+    }
+
+    #[test]
+    fn test_concurrent_file_handling() {
+        let tempdir = TempDir::new("concurrent").unwrap();
+        let mut tree = BPlus::new(2, tempdir.path().into()).unwrap();
+        tree.max_file_size = 256;
+
+        for i in 0..500 {
+            tree.insert(i, vec![i as u8; 100]).unwrap();
+        }
+
+        assert!(tree.file_number > 1);
+    }
+
+    #[test]
+    fn test_iterator_empty() {
+        let tempdir = TempDir::new("iter_empty").unwrap();
+        let tree: BPlus<usize> = BPlus::new(2, tempdir.path().into()).unwrap();
+        let mut iter = tree.into_iter();
+        assert_eq!(iter.next(), None);
+    }
+
+    #[test]
+    fn test_iterator_single() {
+        let tempdir = TempDir::new("iter_single").unwrap();
+        let mut tree = BPlus::new(2, tempdir.path().into()).unwrap();
+        tree.insert(1, vec![1]).unwrap();
+        let mut iter = tree.into_iter();
+        assert_eq!(iter.next(), Some((1, vec![1])));
+        assert_eq!(iter.next(), None);
+    }
+
+    #[test]
+    fn test_iterator_large_dataset() {
+        let tempdir = TempDir::new("iter_large").unwrap();
+        let mut tree = BPlus::new(10, tempdir.path().into()).unwrap();
+        let mut expected = Vec::new();
+
+        for i in 1..=21 {
+            tree.insert(i, vec![i as u8]).unwrap();
+            expected.push((i, vec![i as u8]));
+        }
+
+        let result: Vec<_> = tree.into_iter().collect();
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_minimal_degree() {
+        let tempdir = TempDir::new("min_degree").unwrap();
+        let mut tree = BPlus::new(1, tempdir.path().into()).unwrap();
+
+        for i in 1..=10 {
+            tree.insert(i, vec![i as u8]).unwrap();
+        }
+
+        assert_eq!(tree.get(&5).unwrap(), vec![5]);
+    }
+
+    #[test]
+    fn test_key_duplication() {
+        let tempdir = TempDir::new("dupes").unwrap();
+        let mut tree = BPlus::new(2, tempdir.path().into()).unwrap();
+
+        for _ in 0..10 {
+            tree.insert(42, vec![1]).unwrap();
+            tree.insert(42, vec![2]).unwrap();
+        }
+
+        assert_eq!(tree.get(&42).unwrap(), vec![2]);
+    }
+
+    #[test]
+    fn test_string_keys() {
+        let tempdir = TempDir::new("string_keys").unwrap();
+        let mut tree = BPlus::new(2, tempdir.path().into()).unwrap();
+
+        tree.insert("apple".to_string(), b"fruit".to_vec()).unwrap();
+        tree.insert("banana".to_string(), b"yellow".to_vec())
+            .unwrap();
+
+        assert_eq!(tree.get(&"apple".to_string()).unwrap(), b"fruit");
+        assert_eq!(tree.get(&"banana".to_string()).unwrap(), b"yellow");
+    }
+
+    #[test]
+    fn test_stress_1m_entries() {
+        let tempdir = TempDir::new("stress_1m").unwrap();
+        let mut tree = BPlus::new(100, tempdir.path().into()).unwrap();
+
+        for i in 0..1_000_000 {
+            tree.insert(i, vec![i as u8]).unwrap();
+        }
+
+        for i in 0..1_000_000 {
+            assert_eq!(tree.get(&i).unwrap(), vec![i as u8]);
+        }
+    }
+
+    #[test]
+    fn test_find_nonexistent_after_splits() {
+        let tempdir = TempDir::new("nonexistent").unwrap();
+        let mut tree = BPlus::new(2, tempdir.path().into()).unwrap();
+
+        for i in 0..1000 {
+            tree.insert(i, vec![1]).unwrap();
+        }
+
+        assert!(tree.get(&1001).is_err());
+    }
+
+    #[test]
+    fn test_entry_ordering() {
+        let tempdir = TempDir::new("ordering").unwrap();
+        let mut tree = BPlus::new(3, tempdir.path().into()).unwrap();
+        let mut rng = rand::thread_rng();
+        let mut nums: Vec<u32> = (0..1000).collect();
+        nums.shuffle(&mut rng);
+
+        for &num in &nums {
+            tree.insert(num, vec![num as u8]).unwrap();
+        }
+
+        let mut sorted = nums.clone();
+        sorted.sort_unstable();
+        let result: Vec<_> = tree.into_iter().map(|(k, _)| k).collect();
+        assert_eq!(result, sorted);
+    }
+
+    #[test]
+    fn test_node_consistency_after_splits() {
+        let tempdir = TempDir::new("consistency").unwrap();
+        let mut tree = BPlus::new(2, tempdir.path().into()).unwrap();
+
+        for i in 0..10 {
+            tree.insert(i, vec![i as u8]).unwrap();
+        }
+
+        if let Node::Internal(root) = &tree.root {
+            assert!(root.keys.len() >= 1);
+            assert!(root.children.len() >= 2);
+
+            for key in &root.keys {
+                let key_val = **key;
+                assert!(key_val > 0 && key_val < 10);
+            }
+        }
+    }
+
+    #[test]
+    fn test_custom_data_types() {
+        #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
+        struct ComplexKey {
+            id: u64,
+            name: String,
+        }
+
+        let tempdir = TempDir::new("custom_type").unwrap();
+        let mut tree = BPlus::new(2, tempdir.path().into()).unwrap();
+
+        let key1 = ComplexKey {
+            id: 1,
+            name: "A".to_string(),
+        };
+        let key2 = ComplexKey {
+            id: 2,
+            name: "B".to_string(),
+        };
+
+        tree.insert(key1.clone(), b"data1".to_vec()).unwrap();
+        tree.insert(key2.clone(), b"data2".to_vec()).unwrap();
+
+        assert_eq!(tree.get(&key1).unwrap(), b"data1");
+        assert_eq!(tree.get(&key2).unwrap(), b"data2");
     }
 }
