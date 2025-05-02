@@ -10,6 +10,8 @@ use std::{
     rc::Rc,
 };
 
+const DEFAULT_MAX_FILE_SIZE: u64 = 2 << 20;
+
 extern crate chunkfs;
 
 /// Structure that handles chunks written in files
@@ -26,13 +28,10 @@ impl ChunkHandler {
     }
 
     fn read(&self) -> io::Result<Vec<u8>> {
-        let file = File::open(self.path.clone()).expect("file error");
+        let file = File::open(self.path.clone())?;
         let mut buf = vec![0; self.size];
-        let result = file.read_exact_at(&mut buf, self.offset);
-        match result {
-            Ok(_x) => Ok(buf),
-            Err(error) => Err(error),
-        }
+        file.read_exact_at(&mut buf, self.offset)?;
+        Ok(buf)
     }
 }
 
@@ -89,12 +88,7 @@ impl<K: Ord + Debug> BPlus<K> {
                 }
             }
             Node::Leaf(leaf) => {
-                let entries: Vec<String> = leaf
-                    .entries
-                    .iter()
-                    .map(|(k, _)| format!("{:?}", k))
-                    .collect();
-                println!("{}[Leaf] entries: {:?}", "  ".repeat(level), entries);
+                println!("{}[Leaf] entries: {:?}", "  ".repeat(level), leaf.entries);
             }
         }
     }
@@ -115,7 +109,7 @@ impl<K: Default + Ord + Clone + Debug> BPlus<K> {
             file_number: 0,
             offset: 0,
             current_file,
-            max_file_size: 2 << 20,
+            max_file_size: DEFAULT_MAX_FILE_SIZE,
         })
     }
 
@@ -124,14 +118,13 @@ impl<K: Default + Ord + Clone + Debug> BPlus<K> {
         if self.offset >= self.max_file_size {
             self.file_number += 1;
             self.offset = 0;
-            self.current_file =
-                File::create(self.path.join(format!("{}", self.file_number))).unwrap();
+            self.current_file = File::create(self.path.join(self.file_number.to_string())).unwrap();
         }
 
         let value_size = value.len();
         self.current_file.write_at(&value, self.offset)?;
         let value_to_insert = ChunkHandler::new(
-            self.path.join(format!("{0}", self.file_number)),
+            self.path.join(self.file_number.to_string()),
             self.offset,
             value.len(),
         );
@@ -259,7 +252,10 @@ impl<K: Clone + Ord + Debug> Node<K> {
     fn get(&self, key: &K) -> io::Result<Vec<u8>> {
         match self {
             Node::Leaf(leaf) => match leaf.entries.binary_search_by(|(k, _)| k.as_ref().cmp(key)) {
-                Ok(pos) => Ok(leaf.entries[pos].1.read().unwrap()),
+                Ok(pos) => {
+                    let data_read_result = leaf.entries[pos].1.read()?;
+                    Ok(data_read_result)
+                }
                 Err(_) => Err(ErrorKind::NotFound.into()),
             },
             Node::Internal(internal_node) => {

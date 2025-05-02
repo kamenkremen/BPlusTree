@@ -16,10 +16,10 @@ jobs:
       run: cargo build --verbose
     - name: Add fmt
       run: rustup component add rustfmt
-    - name: Add Clippy
-      run: rustup component add clippy
     - name: Format
       run: cargo fmt --all -- --check
+    - name: Add Clippy
+      run: rustup component add clippy
     - name: Clippy
       run: cargo clippy -- -D warnings
     - name: Run tests
