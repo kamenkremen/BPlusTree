@@ -321,7 +321,6 @@ impl<K: Ord + Clone + Debug> Iterator for BPlusIterator<K> {
                             self.current_index = 0;
                         }
                         None => {
-                            println!("erm");
                             self.current_leaf = None;
                             return None;
                         }
