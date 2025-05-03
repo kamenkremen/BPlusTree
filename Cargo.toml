@@ -1,0 +1,15 @@
+[package]
+name = "bplus_tree"
+version = "0.1.0"
+edition = "2021"
+
+[dev-dependencies]
+tempdir = "0.3.7"
+tempfile = "3.14.0"
+criterion = "0.5.1"
+
+[dependencies]
+chunkfs = { version = "0.1", features = ["chunkers", "hashers"] }
+gnuplot = "0.0.44"
+approx = "0.5.1"
+rand = "0.8.5"
