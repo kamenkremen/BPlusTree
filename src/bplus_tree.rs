@@ -2,9 +2,8 @@ use chunkfs::{Data, DataContainer, Database};
 
 use std::{
     cell::RefCell,
-    fmt,
-    fmt::Debug,
-    fs::File,
+    fmt::{self, Debug},
+    fs::{create_dir_all, File},
     io::{self, ErrorKind},
     os::unix::fs::FileExt,
     path::PathBuf,
@@ -98,25 +97,26 @@ impl<K: Ord + fmt::Debug> fmt::Display for BPlus<K> {
 }
 
 impl<K: Ord + fmt::Debug> BPlus<K> {
-    fn fmt_node(node: &Node<K>, level: usize, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt_node(
+        node: &Node<K>,
+        level: usize,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
         match node {
             Node::Internal(internal) => {
-                // Форматируем внутренний узел
                 writeln!(
                     f,
                     "{}[Internal] keys: {:?}",
                     "  ".repeat(level),
                     internal.keys
                 )?;
-
-                // Рекурсивно форматируем дочерние узлы
+                
                 for child in &internal.children {
                     BPlus::fmt_node(&child.borrow(), level + 1, f)?;
                 }
                 Ok(())
             }
             Node::Leaf(leaf) => {
-                // Форматируем листовой узел
                 writeln!(
                     f,
                     "{}[Leaf] entries: {:?}",
@@ -128,28 +128,6 @@ impl<K: Ord + fmt::Debug> BPlus<K> {
     }
 }
 
-/*#[allow(dead_code)]
-impl<K: Ord + Debug> BPlus<K> {
-    /// Prints B+ tree for debug purposes
-    pub fn print_tree(&self) {
-        BPlus::print_node(&self.root, 0);
-    }
-
-    fn print_node(node: &Node<K>, level: usize) {
-        match node {
-            Node::Internal(internal) => {
-                println!("{}[Internal] keys: {:?}", "  ".repeat(level), internal.keys);
-                for child in &internal.children {
-                    BPlus::print_node(&child.borrow(), level + 1);
-                }
-            }
-            Node::Leaf(leaf) => {
-                println!("{}[Leaf] entries: {:?}", "  ".repeat(level), leaf.entries);
-            }
-        }
-    }
-}*/
-
 #[allow(dead_code)]
 impl<K: Default + Ord + Clone + Debug> BPlus<K> {
     /// Creates new instance of B+ tree with given t and path
@@ -157,6 +135,7 @@ impl<K: Default + Ord + Clone + Debug> BPlus<K> {
     /// All data will be written in files in directory by given path
     pub fn new(t: usize, path: PathBuf) -> io::Result<Self> {
         let path_to_file = path.join("0");
+        create_dir_all(&path)?;
         let current_file = File::create(path_to_file)?;
         Ok(Self {
             root: Node::Leaf(Leaf::default()),
