@@ -2,6 +2,7 @@ use chunkfs::{Data, DataContainer, Database};
 
 use std::{
     cell::RefCell,
+    fmt,
     fmt::Debug,
     fs::File,
     io::{self, ErrorKind},
@@ -90,7 +91,44 @@ pub struct BPlus<K> {
     max_file_size: u64,
 }
 
-#[allow(dead_code)]
+impl<K: Ord + fmt::Debug> fmt::Display for BPlus<K> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        BPlus::fmt_node(&self.root, 0, f)
+    }
+}
+
+impl<K: Ord + fmt::Debug> BPlus<K> {
+    fn fmt_node(node: &Node<K>, level: usize, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match node {
+            Node::Internal(internal) => {
+                // Форматируем внутренний узел
+                writeln!(
+                    f,
+                    "{}[Internal] keys: {:?}",
+                    "  ".repeat(level),
+                    internal.keys
+                )?;
+
+                // Рекурсивно форматируем дочерние узлы
+                for child in &internal.children {
+                    BPlus::fmt_node(&child.borrow(), level + 1, f)?;
+                }
+                Ok(())
+            }
+            Node::Leaf(leaf) => {
+                // Форматируем листовой узел
+                writeln!(
+                    f,
+                    "{}[Leaf] entries: {:?}",
+                    "  ".repeat(level),
+                    leaf.entries
+                )
+            }
+        }
+    }
+}
+
+/*#[allow(dead_code)]
 impl<K: Ord + Debug> BPlus<K> {
     /// Prints B+ tree for debug purposes
     pub fn print_tree(&self) {
@@ -110,7 +148,7 @@ impl<K: Ord + Debug> BPlus<K> {
             }
         }
     }
-}
+}*/
 
 #[allow(dead_code)]
 impl<K: Default + Ord + Clone + Debug> BPlus<K> {
