@@ -97,11 +97,7 @@ impl<K: Ord + fmt::Debug> fmt::Display for BPlus<K> {
 }
 
 impl<K: Ord + fmt::Debug> BPlus<K> {
-    fn fmt_node(
-        node: &Node<K>,
-        level: usize,
-        f: &mut fmt::Formatter<'_>,
-    ) -> fmt::Result {
+    fn fmt_node(node: &Node<K>, level: usize, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match node {
             Node::Internal(internal) => {
                 writeln!(
@@ -110,7 +106,7 @@ impl<K: Ord + fmt::Debug> BPlus<K> {
                     "  ".repeat(level),
                     internal.keys
                 )?;
-                
+
                 for child in &internal.children {
                     BPlus::fmt_node(&child.borrow(), level + 1, f)?;
                 }
