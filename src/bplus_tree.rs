@@ -454,8 +454,8 @@ mod tests {
     }
 
     #[test]
-    fn test_concurrent_file_handling() {
-        let tempdir = TempDir::new("concurrent").unwrap();
+    fn test_consecutive_file_handling() {
+        let tempdir = TempDir::new("consecutive").unwrap();
         let mut tree = BPlus::new(2, tempdir.path().into()).unwrap();
         tree.max_file_size = 256;
 
