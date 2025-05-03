@@ -9,7 +9,7 @@ tempfile = "3.14.0"
 criterion = "0.5.1"
 
 [dependencies]
-chunkfs = { git = "https://github.com/Piletskii-Oleg/chunkfs.git", branch = "main", features = ["chunkers", "hashers"] }
+chunkfs = { version = "0.1", features = ["chunkers", "hashers"] }
 gnuplot = "0.0.44"
 approx = "0.5.1"
 rand = "0.8.5"
