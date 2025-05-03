@@ -14,19 +14,26 @@ const DEFAULT_MAX_FILE_SIZE: u64 = 2 << 20;
 
 extern crate chunkfs;
 
-/// Structure that handles chunks written in files
+/// Structure that handles chunks written in files.
 #[derive(Clone, Default, Debug)]
 pub struct ChunkHandler {
+    /// Path to file with chunk.
     path: PathBuf,
+    /// Offset in file with chunk.
     offset: u64,
+    /// Size of chunk.
     size: usize,
 }
 
 impl ChunkHandler {
+    /// Creates new ChunkHandler, that points to the chunk, that stored in file by path
     fn new(path: PathBuf, offset: u64, size: usize) -> Self {
         ChunkHandler { path, offset, size }
     }
 
+    /// Reads data pointed by ChunkHandler.
+    ///
+    /// Returns Err(_) if there is error in opening the file or reading the chunk.
     fn read(&self) -> io::Result<Vec<u8>> {
         let file = File::open(self.path.clone())?;
         let mut buf = vec![0; self.size];
@@ -35,12 +42,12 @@ impl ChunkHandler {
     }
 }
 
-/// A type that represents a reference to another node
+/// A type that represents a reference to another node.
 type Link<K> = Rc<RefCell<Node<K>>>;
 
 /// Represents a node in a B+ tree.
-/// All data resides in leaf nodes, while internal nodes
-/// manage navigation between children
+/// All data resides in leaf nodes, while internal nodes.
+/// manage navigation between children.
 #[derive(Clone)]
 enum Node<K> {
     Internal(InternalNode<K>),
@@ -50,25 +57,36 @@ enum Node<K> {
 /// Internal node in a B+ tree
 #[derive(Clone)]
 struct InternalNode<K> {
+    /// Children of that node.
     children: Vec<Link<K>>,
+    /// Keys of that node.
     keys: Vec<Rc<K>>,
 }
 
 /// Leaf node in a B+ tree
 #[derive(Default, Clone)]
 struct Leaf<K> {
+    /// Data entries that stored in that leaf.
     entries: Vec<(Rc<K>, ChunkHandler)>,
+    /// Link to the next leaf; None if there are none.
     next: Option<Link<K>>,
 }
 
 /// B+ tree
 pub struct BPlus<K> {
+    /// Root of the B+ tree.
     root: Node<K>,
+    /// Parameter, that represents minimal and maximal amount of node keys.
     t: usize,
+    /// Path to the directory, in which all data will be writen.
     path: PathBuf,
+    /// Number of current file.
     file_number: usize,
+    /// Current offset in current file.
     offset: u64,
+    /// Current file.
     current_file: File,
+    /// Max file size.
     max_file_size: u64,
 }
 
@@ -133,6 +151,7 @@ impl<K: Default + Ord + Clone + Debug> BPlus<K> {
     }
 
     /// Inserts given value by given key in the B+ tree
+    ///
     /// Returns Err(_) if file could not be created
     pub fn insert(&mut self, key: K, value: Vec<u8>) -> io::Result<()> {
         let value_to_insert = self.get_chunk_handler(value).unwrap();
@@ -140,20 +159,22 @@ impl<K: Default + Ord + Clone + Debug> BPlus<K> {
         let key = Rc::new(key);
 
         if let Some((new_node_link, new_key)) = self.root.insert(key, value_to_insert, self.t) {
-            {
-                let mut prev_root = self.root.clone();
-                if let Node::Leaf(mut leaf) = prev_root {
-                    leaf.next = Some(new_node_link.clone());
-                    prev_root = Node::Leaf(leaf);
-                }
-
-                let new_root = Node::<K>::Internal(InternalNode {
-                    children: vec![Rc::new(RefCell::new(prev_root)), new_node_link],
-                    keys: vec![new_key],
-                });
-
-                self.root = new_root;
+            let mut prev_root = self.root.clone();
+            if let Node::Leaf(mut leaf) = prev_root {
+                leaf.next = Some(new_node_link.clone());
+                prev_root = Node::Leaf(leaf);
             }
+            let mut new_root_children = Vec::with_capacity(2 * self.t);
+            let mut new_root_keys = Vec::with_capacity(2 * self.t - 1);
+            new_root_children.push(Rc::new(RefCell::new(prev_root)));
+            new_root_children.push(new_node_link);
+            new_root_keys.push(new_key);
+            let new_root = Node::<K>::Internal(InternalNode {
+                children: new_root_children,
+                keys: new_root_keys,
+            });
+
+            self.root = new_root;
         }
         Ok(())
     }
@@ -174,7 +195,8 @@ impl<K: Clone + Ord + Debug> Node<K> {
     fn split(&mut self, t: usize) -> (Link<K>, Rc<K>) {
         match self {
             Node::Leaf(leaf) => {
-                let new_leaf_entries = leaf.entries.split_off(t);
+                let mut new_leaf_entries = leaf.entries.split_off(t);
+                new_leaf_entries.reserve_exact(t);
                 let middle_key = new_leaf_entries[0].0.clone();
 
                 let new_leaf = Node::Leaf(Leaf {
@@ -191,7 +213,9 @@ impl<K: Clone + Ord + Debug> Node<K> {
                 let mut new_node_keys = internal_node.keys.split_off(t - 1);
                 let middle_key = new_node_keys.remove(0);
 
-                let new_node_children = internal_node.children.split_off(t);
+                let mut new_node_children = internal_node.children.split_off(t);
+                new_node_keys.reserve_exact(t);
+                new_node_children.reserve_exact(t);
 
                 let new_node = Node::Internal(InternalNode {
                     children: new_node_children,
@@ -215,7 +239,6 @@ impl<K: Clone + Ord + Debug> Node<K> {
                 if leaf.entries.len() == 2 * t {
                     return Some(self.split(t));
                 }
-
                 None
             }
             Node::Internal(internal_node) => {
@@ -332,7 +355,6 @@ impl<K: Ord + Clone + Debug> Iterator for BPlusIterator<K> {
 impl<K: Ord + Clone + Default + Debug> IntoIterator for BPlus<K> {
     type Item = (K, Vec<u8>);
     type IntoIter = BPlusIterator<K>;
-
     fn into_iter(self) -> Self::IntoIter {
         let mut current = Some(Rc::new(RefCell::new(self.root)));
         while let Some(node) = current.clone() {
@@ -420,7 +442,7 @@ mod tests {
 
                 if let Node::Leaf(leaf) = &*leaf_guard {
                     collected.extend(leaf.entries.iter().map(|(k, _)| **k));
-                    current_leaf = leaf.next.as_ref().map(|next| Rc::clone(next));
+                    current_leaf = leaf.next.as_ref().map(Rc::clone);
                 } else {
                     break;
                 }
@@ -454,7 +476,7 @@ mod tests {
         }
 
         if let Node::Internal(root) = &tree.root {
-            assert!(root.keys.len() >= 1);
+            assert!(!root.keys.is_empty());
             assert!(root.children.len() >= 2);
 
             for key in &root.keys {
