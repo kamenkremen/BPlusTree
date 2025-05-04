@@ -75,7 +75,7 @@ struct Leaf<K> {
 /// B+ tree
 pub struct BPlus<K> {
     /// Root of the B+ tree.
-    root: Node<K>,
+    root: Link<K>,
     /// Parameter, that represents minimal and maximal amount of node keys.
     t: usize,
     /// Path to the directory, in which all data will be writen.
@@ -97,27 +97,35 @@ impl<K: Ord + fmt::Debug> fmt::Display for BPlus<K> {
 }
 
 impl<K: Ord + fmt::Debug> BPlus<K> {
-    fn fmt_node(node: &Node<K>, level: usize, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match node {
+    fn fmt_node(node: &Link<K>, level: usize, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node_ref = node.borrow();
+
+        match &*node_ref {
             Node::Internal(internal) => {
                 writeln!(
                     f,
                     "{}[Internal] keys: {:?}",
                     "  ".repeat(level),
-                    internal.keys
+                    internal.keys.iter().map(|k| k.as_ref()).collect::<Vec<_>>()
                 )?;
 
                 for child in &internal.children {
-                    BPlus::fmt_node(&child.borrow(), level + 1, f)?;
+                    Self::fmt_node(child, level + 1, f)?;
                 }
                 Ok(())
             }
             Node::Leaf(leaf) => {
                 writeln!(
                     f,
-                    "{}[Leaf] entries: {:?}",
+                    "{}[Leaf] entries: {:?}, next: {}",
                     "  ".repeat(level),
                     leaf.entries
+                        .iter()
+                        .map(|(k, v)| (k.as_ref(), v))
+                        .collect::<Vec<_>>(),
+                    leaf.next
+                        .as_ref()
+                        .map_or("None".into(), |n| format!("{:p}", Rc::as_ptr(n)))
                 )
             }
         }
@@ -134,7 +142,7 @@ impl<K: Default + Ord + Clone + Debug> BPlus<K> {
         create_dir_all(&path)?;
         let current_file = File::create(path_to_file)?;
         Ok(Self {
-            root: Node::Leaf(Leaf::default()),
+            root: Rc::new(RefCell::new(Node::Leaf(Leaf::default()))),
             t,
             path,
             file_number: 0,
@@ -171,15 +179,16 @@ impl<K: Default + Ord + Clone + Debug> BPlus<K> {
 
         let key = Rc::new(key);
 
-        if let Some((new_node_link, new_key)) = self.root.insert(key, value_to_insert, self.t) {
-            let mut prev_root = self.root.clone();
-            if let Node::Leaf(mut leaf) = prev_root {
+        if let Some((new_node_link, new_key)) =
+            Node::insert(self.root.clone(), key, value_to_insert, self.t)
+        {
+            //let mut prev_root = self.root.clone();
+            if let Node::Leaf(ref mut leaf) = &mut *(self.root.clone()).borrow_mut() {
                 leaf.next = Some(new_node_link.clone());
-                prev_root = Node::Leaf(leaf);
             }
             let mut new_root_children = Vec::with_capacity(2 * self.t);
             let mut new_root_keys = Vec::with_capacity(2 * self.t - 1);
-            new_root_children.push(Rc::new(RefCell::new(prev_root)));
+            new_root_children.push(self.root.clone());
             new_root_children.push(new_node_link);
             new_root_keys.push(new_key);
             let new_root = Node::<K>::Internal(InternalNode {
@@ -187,8 +196,9 @@ impl<K: Default + Ord + Clone + Debug> BPlus<K> {
                 keys: new_root_keys,
             });
 
-            self.root = new_root;
+            self.root = Rc::new(RefCell::new(new_root));
         }
+
         Ok(())
     }
 
@@ -199,7 +209,7 @@ impl<K: Default + Ord + Clone + Debug> BPlus<K> {
 
     /// Gets value from a B+ tree by given key
     pub fn get(&self, key: &K) -> io::Result<Vec<u8>> {
-        self.root.get(key)
+        Node::get(self.root.clone(), key)
     }
 }
 
@@ -240,43 +250,70 @@ impl<K: Clone + Ord + Debug> Node<K> {
         }
     }
 
-    /// Inserts given value by given key
-    fn insert(&mut self, key: Rc<K>, value: ChunkHandler, t: usize) -> Option<(Link<K>, Rc<K>)> {
-        match self {
-            Node::Leaf(leaf) => {
-                match leaf.entries.binary_search_by(|(k, _)| k.cmp(&key)) {
-                    Ok(x) => leaf.entries[x] = (key.clone(), value),
-                    Err(x) => leaf.entries.insert(x, (key.clone(), value)),
-                };
+    /// Inserts given value by given key    
+    fn insert(
+        root: Link<K>,
+        key: Rc<K>,
+        value: ChunkHandler,
+        t: usize,
+    ) -> Option<(Link<K>, Rc<K>)> {
+        let mut path = Vec::new(); // Path to leaf
+        let mut current = root;
+        let mut split_result;
 
-                if leaf.entries.len() == 2 * t {
-                    return Some(self.split(t));
+        // Descent to the leaf
+        loop {
+            let current_clone = current.clone();
+            let mut current_node = current_clone.borrow_mut();
+            match &mut *current_node {
+                Node::Leaf(leaf) => {
+                    match leaf.entries.binary_search_by(|(k, _)| k.cmp(&key)) {
+                        Ok(pos) => leaf.entries[pos] = (key.clone(), value),
+                        Err(pos) => leaf.entries.insert(pos, (key.clone(), value)),
+                    };
+
+                    split_result = if leaf.entries.len() == 2 * t {
+                        Some(current_node.split(t))
+                    } else {
+                        None
+                    };
+                    break;
                 }
-                None
-            }
-            Node::Internal(internal_node) => {
-                let pos = match internal_node.keys.binary_search(&key) {
-                    Ok(x) => x + 1,
-                    Err(x) => x,
-                };
-                let child = internal_node.children[pos].clone();
-                let mut borrowed_child = child.borrow_mut();
-                let result = borrowed_child.insert(key, value, t);
+                Node::Internal(internal) => {
+                    let pos = match internal.keys.binary_search(&key) {
+                        Ok(pos) => pos + 1,
+                        Err(pos) => pos,
+                    };
 
-                match result {
-                    Some((new_child, key)) => {
-                        internal_node.keys.insert(pos, key.clone());
-                        internal_node.children.insert(pos + 1, new_child);
+                    let next_node = internal.children[pos].clone();
 
-                        match internal_node.keys.len() {
-                            val if val == 2 * t - 1 => Some(self.split(t)),
-                            _ => None,
-                        }
-                    }
-                    None => None,
+                    path.push((current, pos));
+
+                    current = next_node;
                 }
             }
         }
+
+        // Going up to the root splitting nodes if needed
+        while let Some((parent, pos)) = path.pop() {
+            if let Some((new_node, median)) = split_result.take() {
+                let mut node = parent.borrow_mut();
+                if let Node::Internal(internal) = &mut *node {
+                    internal.keys.insert(pos, median.clone());
+                    internal.children.insert(pos + 1, new_node);
+
+                    if internal.keys.len() == 2 * t - 1 {
+                        split_result = Some(node.split(t));
+                    } else {
+                        split_result = None;
+                    }
+                } else {
+                    break; // No need to split the nodes anymore
+                }
+            }
+        }
+
+        split_result
     }
 
     #[allow(unused_variables, dead_code)]
@@ -285,27 +322,37 @@ impl<K: Clone + Ord + Debug> Node<K> {
     }
 
     /// Gets value from a B+ tree by given key
-    fn get(&self, key: &K) -> io::Result<Vec<u8>> {
-        match self {
-            Node::Leaf(leaf) => match leaf.entries.binary_search_by(|(k, _)| k.as_ref().cmp(key)) {
-                Ok(pos) => {
-                    let data_read_result = leaf.entries[pos].1.read()?;
-                    Ok(data_read_result)
-                }
-                Err(_) => Err(ErrorKind::NotFound.into()),
-            },
-            Node::Internal(internal_node) => {
-                let pos = match internal_node.keys.binary_search_by(|k| k.as_ref().cmp(key)) {
-                    Ok(x) => x + 1,
-                    Err(x) => x,
-                };
+    fn get(root: Link<K>, key: &K) -> io::Result<Vec<u8>> {
+        let mut current = root;
 
-                let child = internal_node.children.get(pos);
-                match child {
-                    Some(x) => x.clone().borrow().get(key),
-                    None => Err(ErrorKind::NotFound.into()),
+        loop {
+            let current_clone = current.clone();
+            let node = current_clone.borrow();
+
+            match &*node {
+                Node::Leaf(leaf) => {
+                    return match leaf.entries.binary_search_by(|(k, _)| k.as_ref().cmp(key)) {
+                        Ok(pos) => {
+                            let data_read_result = leaf.entries[pos].1.read()?;
+                            Ok(data_read_result)
+                        }
+                        Err(_) => Err(ErrorKind::NotFound.into()),
+                    };
+                }
+                Node::Internal(internal) => {
+                    let pos = match internal.keys.binary_search_by(|k| k.as_ref().cmp(key)) {
+                        Ok(pos) => pos + 1,
+                        Err(pos) => pos,
+                    };
+
+                    current = match internal.children.get(pos) {
+                        Some(child) => child.clone(),
+                        None => return Err(ErrorKind::NotFound.into()),
+                    };
                 }
             }
+
+            drop(node);
         }
     }
 }
@@ -319,11 +366,11 @@ impl<K: Ord + Clone + Default + Debug> Database<K, DataContainer<()>> for BPlus<
     }
 
     fn get(&self, key: &K) -> io::Result<DataContainer<()>> {
-        self.root.get(key).map(DataContainer::from)
+        Node::get(self.root.clone(), key).map(DataContainer::from)
     }
 
     fn contains(&self, key: &K) -> bool {
-        self.root.get(key).is_ok()
+        Node::get(self.root.clone(), key).is_ok()
     }
 }
 
@@ -369,7 +416,7 @@ impl<K: Ord + Clone + Default + Debug> IntoIterator for BPlus<K> {
     type Item = (K, Vec<u8>);
     type IntoIter = BPlusIterator<K>;
     fn into_iter(self) -> Self::IntoIter {
-        let mut current = Some(Rc::new(RefCell::new(self.root)));
+        let mut current = Some(self.root);
         while let Some(node) = current.clone() {
             let borrowed = node.borrow();
             match &*borrowed {
@@ -396,17 +443,28 @@ mod tests {
     #[test]
     fn test_node_split_leaf() {
         let tempdir = TempDir::new("split_leaf").unwrap();
-        let mut tree: BPlus<usize> = BPlus::new(2, tempdir.path().into()).unwrap();
+        let mut tree = BPlus::new(2, tempdir.path().into()).unwrap();
 
         for i in 1..5 {
             tree.insert(i, vec![i as u8]).unwrap();
         }
 
-        if let Node::Internal(root) = &tree.root {
-            assert_eq!(root.keys.len(), 1);
-            assert_eq!(root.children.len(), 2);
+        let root = tree.root.borrow();
+        if let Node::Internal(root_node) = &*root {
+            assert_eq!(root_node.keys.len(), 1);
+            assert_eq!(root_node.children.len(), 2);
+
+            let left_child = root_node.children[0].borrow();
+            if let Node::Leaf(left_leaf) = &*left_child {
+                assert_eq!(left_leaf.entries.len(), 2);
+            }
+
+            let right_child = root_node.children[1].borrow();
+            if let Node::Leaf(right_leaf) = &*right_child {
+                assert_eq!(right_leaf.entries.len(), 2);
+            }
         } else {
-            assert!(false);
+            panic!("Root should be internal after split");
         }
     }
 
@@ -435,30 +493,27 @@ mod tests {
             tree.insert(i, vec![i as u8]).unwrap();
         }
 
-        let mut current = Some(Rc::new(RefCell::new(tree.root)));
-        while let Some(node) = current.clone() {
-            let borrowed = node.borrow();
-            match &*borrowed {
+        let mut current = tree.root.clone();
+        loop {
+            let current_clone = current.clone();
+            let node = current_clone.borrow();
+            match &*node {
                 Node::Internal(internal) => {
-                    current = Some(Rc::clone(&internal.children[0]));
+                    current = internal.children[0].clone();
                 }
                 Node::Leaf(_) => break,
             }
         }
 
-        let mut collected = vec![];
-        if let Node::Leaf(first_leaf) = &*current.clone().as_ref().unwrap().borrow() {
-            let mut current_leaf = Some(Rc::new(RefCell::new(Node::Leaf(first_leaf.clone()))));
-
-            while let Some(leaf_ref) = current_leaf {
-                let leaf_guard = leaf_ref.borrow();
-
-                if let Node::Leaf(leaf) = &*leaf_guard {
-                    collected.extend(leaf.entries.iter().map(|(k, _)| **k));
-                    current_leaf = leaf.next.as_ref().map(Rc::clone);
-                } else {
-                    break;
-                }
+        let mut collected = Vec::new();
+        let mut leaf_opt = Some(current);
+        while let Some(leaf_ref) = leaf_opt {
+            let leaf = leaf_ref.borrow();
+            if let Node::Leaf(leaf_node) = &*leaf {
+                collected.extend(leaf_node.entries.iter().map(|(k, _)| **k));
+                leaf_opt = leaf_node.next.as_ref().map(|n| n.clone());
+            } else {
+                panic!("Expected leaf node");
             }
         }
 
@@ -478,7 +533,6 @@ mod tests {
 
         assert!(tree.file_number > 1);
     }
-
     #[test]
     fn test_node_consistency_after_splits() {
         let tempdir = TempDir::new("consistency").unwrap();
@@ -488,14 +542,18 @@ mod tests {
             tree.insert(i, vec![i as u8]).unwrap();
         }
 
-        if let Node::Internal(root) = &tree.root {
-            assert!(!root.keys.is_empty());
-            assert!(root.children.len() >= 2);
+        let root = tree.root.borrow();
+        if let Node::Internal(root_node) = &*root {
+            assert!(!root_node.keys.is_empty());
+            assert!(root_node.children.len() >= 2);
 
-            for key in &root.keys {
+            for key in &root_node.keys {
                 let key_val = **key;
                 assert!(key_val > 0 && key_val < 10);
             }
+        } else {
+            panic!("Root should be internal node after splits");
         }
     }
 }
+
