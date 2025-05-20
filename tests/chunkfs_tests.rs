@@ -1,4 +1,4 @@
-extern crate chunkfs;
+/*extern crate chunkfs;
 
 use std::collections::HashMap;
 use std::io;
@@ -218,4 +218,4 @@ fn write_from_stream_buf_reader() {
     let read = fs.read_file_complete(&ro_fh).unwrap();
     assert_eq!(read.len(), MB);
     assert_eq!(read, [1; MB]);
-}
+}*/

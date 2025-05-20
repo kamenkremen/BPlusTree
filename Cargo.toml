@@ -8,8 +8,12 @@ tempdir = "0.3.7"
 tempfile = "3.14.0"
 criterion = "0.5.1"
 
+
 [dependencies]
 chunkfs = { version = "0.1", features = ["chunkers", "hashers"] }
 gnuplot = "0.0.44"
 approx = "0.5.1"
 rand = "0.8.5"
+tokio = { version = "1.44.2", features = ["full"] }
+env_logger = "0.11.8"
+log = "0.4.27"

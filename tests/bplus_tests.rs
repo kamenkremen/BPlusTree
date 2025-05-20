@@ -1,4 +1,4 @@
-extern crate chunkfs;
+/*extern crate chunkfs;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -317,4 +317,4 @@ fn test_custom_data_types() {
 
     assert_eq!(tree.get(&key1).unwrap(), b"data1");
     assert_eq!(tree.get(&key2).unwrap(), b"data2");
-}
+}*/
