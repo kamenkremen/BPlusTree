@@ -111,6 +111,7 @@ pub struct BPlusStorage {
     runtime: Runtime,
     /// Currently inserting keys
     keys_set: Arc<Mutex<HashSet<Vec<u8>>>>,
+    pending_inserts: Arc<AtomicUsize>,
 }
 
 impl BPlusStorage {
@@ -124,6 +125,7 @@ impl BPlusStorage {
             tree: Arc::new(tree),
             runtime,
             keys_set: Arc::new(Mutex::new(HashSet::new())),
+            pending_inserts: Arc::new(0.into()),
         })
     }
 }
@@ -139,9 +141,12 @@ impl Database<Vec<u8>, DataContainer<()>> for BPlusStorage {
         };
 
         let set_clone = self.keys_set.clone();
+        let pending_inserts_clone = self.pending_inserts.clone();
+        pending_inserts_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
         self.runtime.spawn(async move {
             set_clone.lock().await.insert(key.clone());
+            pending_inserts_clone.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
             tree.insert(key.clone(), value).await.unwrap();
             set_clone.lock().await.remove(&key);
         });
@@ -152,6 +157,13 @@ impl Database<Vec<u8>, DataContainer<()>> for BPlusStorage {
     fn get(&self, key: &Vec<u8>) -> io::Result<DataContainer<()>> {
         let tree = self.tree.clone();
         let set_clone = self.keys_set.clone();
+        if self
+            .pending_inserts
+            .load(std::sync::atomic::Ordering::SeqCst)
+            > 0
+        {
+            thread::sleep(time::Duration::from_millis(10));
+        }
         Ok(self
             .runtime
             .block_on(async move {
@@ -252,8 +264,6 @@ impl<K: Default + Ord + Clone + Debug + Sized> BPlus<K> {
                         Ok(pos) => leaf.entries[pos] = (key.clone(), value),
                         Err(pos) => leaf.entries.insert(pos, (key.clone(), value)),
                     };
-
-                    println!("leaf.len = {}", leaf.entries.len());
 
                     split_result = if leaf.entries.len() == 2 * self.t {
                         Some(current_node.split(self.t))
@@ -467,7 +477,7 @@ mod tests {
         let (tree, _temp) = create_test_tree(2, "multiple_inserts");
 
         for i in 1..=4 {
-            tree.insert(i, vec![i as u8]).await.unwrap(); // let _ = handle.spawn(async move {tree.insert(i, vec![i as u8]).await}).await.unwrap();
+            tree.insert(i, vec![i as u8]).await.unwrap();
         }
 
         for i in 1..=4 {
