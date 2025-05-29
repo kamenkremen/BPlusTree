@@ -1,5 +1,5 @@
 use std::{
-    collections::VecDeque,
+    collections::{HashSet, VecDeque},
     fmt::Debug,
     fs::{create_dir_all, File},
     io::{self, ErrorKind},
@@ -11,9 +11,15 @@ use std::{
         atomic::{AtomicU64, AtomicUsize},
         Arc,
     },
+    thread, time,
 };
 
-use tokio::{self, sync::RwLock};
+use chunkfs::{Data, DataContainer, Database};
+use tokio::{
+    self,
+    runtime::Runtime,
+    sync::{Mutex, RwLock},
+};
 
 const DEFAULT_MAX_FILE_SIZE: u64 = 2 << 20;
 
@@ -97,6 +103,72 @@ pub struct BPlus<K> {
     latch: RwLock<()>,
 }
 
+/// Wrapper for BPlusTree with sync functions with async runtime
+pub struct BPlusStorage {
+    /// BPlusTree
+    tree: Arc<BPlus<Vec<u8>>>,
+    /// Async tokio runtime for operations
+    runtime: Runtime,
+    /// Currently inserting keys
+    keys_set: Arc<Mutex<HashSet<Vec<u8>>>>,
+}
+
+impl BPlusStorage {
+    /// Creates new instance of B+ tree with given runtime, t and path
+    /// runtime is tokio runtime
+    /// t represents minimal and maximum quantity of keys in the node
+    /// All data will be written in directory by given path
+    pub fn new(runtime: Runtime, t: usize, path: PathBuf) -> io::Result<Self> {
+        let tree = BPlus::new(t, path).unwrap();
+        Ok(Self {
+            tree: Arc::new(tree),
+            runtime,
+            keys_set: Arc::new(Mutex::new(HashSet::new())),
+        })
+    }
+}
+
+impl Database<Vec<u8>, DataContainer<()>> for BPlusStorage {
+    /// Inserts given value by given key in the B+ tree
+    fn insert(&mut self, key: Vec<u8>, value: DataContainer<()>) -> io::Result<()> {
+        let tree = self.tree.clone();
+
+        let value = match value.extract() {
+            Data::Chunk(chunk) => chunk.clone(),
+            Data::TargetChunk(_chunk) => unimplemented!(),
+        };
+
+        let set_clone = self.keys_set.clone();
+
+        self.runtime.spawn(async move {
+            set_clone.lock().await.insert(key.clone());
+            tree.insert(key.clone(), value).await.unwrap();
+            set_clone.lock().await.remove(&key);
+        });
+        Ok(())
+    }
+
+    /// Gets value by given key from B+ tree
+    fn get(&self, key: &Vec<u8>) -> io::Result<DataContainer<()>> {
+        let tree = self.tree.clone();
+        let set_clone = self.keys_set.clone();
+        Ok(self
+            .runtime
+            .block_on(async move {
+                while set_clone.lock().await.contains(key) {
+                    thread::sleep(time::Duration::from_millis(10));
+                }
+                tree.get(key).await.unwrap()
+            })
+            .into())
+    }
+
+    /// Returns whether key is contained in the B+ tree or not
+    fn contains(&self, key: &Vec<u8>) -> bool {
+        self.get(key).is_ok()
+    }
+}
+
 #[allow(dead_code)]
 impl<K: Default + Ord + Clone + Debug + Sized> BPlus<K> {
     /// Creates new instance of B+ tree with given t and path
@@ -106,6 +178,7 @@ impl<K: Default + Ord + Clone + Debug + Sized> BPlus<K> {
         let path_to_file = path.join("0");
         create_dir_all(&path)?;
         let current_file = File::create(path_to_file)?;
+
         Ok(Self {
             root: Arc::new(RwLock::new(Node::Leaf(Leaf::default()))),
             t,
@@ -383,29 +456,29 @@ mod tests {
     use tempfile::TempDir;
     use tokio::test;
 
-    async fn create_test_tree(t: usize, name: &str) -> (BPlus<i32>, TempDir) {
+    fn create_test_tree(t: usize, name: &str) -> (BPlus<i32>, TempDir) {
         let temp_dir = TempDir::with_prefix(name).unwrap();
         let tree = BPlus::new(t, temp_dir.path().to_path_buf()).unwrap();
         (tree, temp_dir)
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[test]
     async fn test_multiple_inserts() {
-        let (tree, _temp) = create_test_tree(2, "multiple_inserts").await;
+        let (tree, _temp) = create_test_tree(2, "multiple_inserts");
 
         for i in 1..=4 {
-            tree.insert(i, vec![i as u8]).await.unwrap();
+            tree.insert(i, vec![i as u8]).await.unwrap(); // let _ = handle.spawn(async move {tree.insert(i, vec![i as u8]).await}).await.unwrap();
         }
 
-        for i in 1..=1 {
+        for i in 1..=4 {
             let result = tree.get(&i).await.unwrap();
             assert_eq!(result, vec![i as u8]);
         }
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[test]
     async fn test_concurrent_inserts() {
-        let (tree, _temp) = create_test_tree(2, "concurrent_inserts").await;
+        let (tree, _temp) = create_test_tree(2, "concurrent_inserts");
         let tree = Arc::new(tokio::sync::RwLock::new(tree));
 
         let mut handles = vec![];
@@ -430,7 +503,7 @@ mod tests {
 
     #[test]
     async fn test_root_split() {
-        let (tree, _temp) = create_test_tree(2, "root_split").await;
+        let (tree, _temp) = create_test_tree(2, "root_split");
 
         tree.insert(1, vec![1]).await.unwrap();
         tree.insert(2, vec![2]).await.unwrap();
