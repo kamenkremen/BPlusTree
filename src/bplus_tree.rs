@@ -9,17 +9,13 @@ use std::{
     rc::Rc,
     sync::{
         atomic::{AtomicU64, AtomicUsize},
-        Arc,
+        Arc, Mutex,
     },
     thread, time,
 };
 
 use chunkfs::{Data, DataContainer, Database};
-use tokio::{
-    self,
-    runtime::Runtime,
-    sync::{Mutex, RwLock},
-};
+use tokio::{self, runtime::Runtime, sync::RwLock};
 
 const DEFAULT_MAX_FILE_SIZE: u64 = 2 << 20;
 
@@ -111,7 +107,6 @@ pub struct BPlusStorage {
     runtime: Runtime,
     /// Currently inserting keys
     keys_set: Arc<Mutex<HashSet<Vec<u8>>>>,
-    pending_inserts: Arc<AtomicUsize>,
 }
 
 impl BPlusStorage {
@@ -125,7 +120,6 @@ impl BPlusStorage {
             tree: Arc::new(tree),
             runtime,
             keys_set: Arc::new(Mutex::new(HashSet::new())),
-            pending_inserts: Arc::new(0.into()),
         })
     }
 }
@@ -141,14 +135,11 @@ impl Database<Vec<u8>, DataContainer<()>> for BPlusStorage {
         };
 
         let set_clone = self.keys_set.clone();
-        let pending_inserts_clone = self.pending_inserts.clone();
-        pending_inserts_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        set_clone.lock().unwrap().insert(key.clone());
 
         self.runtime.spawn(async move {
-            set_clone.lock().await.insert(key.clone());
-            pending_inserts_clone.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
             tree.insert(key.clone(), value).await.unwrap();
-            set_clone.lock().await.remove(&key);
+            set_clone.lock().unwrap().remove(&key);
         });
         Ok(())
     }
@@ -157,17 +148,11 @@ impl Database<Vec<u8>, DataContainer<()>> for BPlusStorage {
     fn get(&self, key: &Vec<u8>) -> io::Result<DataContainer<()>> {
         let tree = self.tree.clone();
         let set_clone = self.keys_set.clone();
-        if self
-            .pending_inserts
-            .load(std::sync::atomic::Ordering::SeqCst)
-            > 0
-        {
-            thread::sleep(time::Duration::from_millis(10));
-        }
+
         Ok(self
             .runtime
             .block_on(async move {
-                while set_clone.lock().await.contains(key) {
+                while set_clone.lock().unwrap().contains(key) {
                     thread::sleep(time::Duration::from_millis(10));
                 }
                 tree.get(key).await.unwrap()
