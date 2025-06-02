@@ -449,7 +449,6 @@ impl<K: Clone + Ord + Debug> Node<K> {
 mod tests {
     use super::*;
     use tempfile::TempDir;
-    use tokio::test;
 
     fn create_test_tree(t: usize, name: &str) -> (BPlus<i32>, TempDir) {
         let temp_dir = TempDir::with_prefix(name).unwrap();
@@ -457,7 +456,7 @@ mod tests {
         (tree, temp_dir)
     }
 
-    #[test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_multiple_inserts() {
         let (tree, _temp) = create_test_tree(2, "multiple_inserts");
 
@@ -471,7 +470,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_concurrent_inserts() {
         let (tree, _temp) = create_test_tree(2, "concurrent_inserts");
         let tree = Arc::new(tokio::sync::RwLock::new(tree));
@@ -496,7 +495,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_root_split() {
         let (tree, _temp) = create_test_tree(2, "root_split");
 
@@ -515,7 +514,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_large_value_storage() {
         let temp_dir = TempDir::new().unwrap();
         let mut tree = BPlus::new(2, temp_dir.path().to_path_buf()).unwrap();
