@@ -124,7 +124,9 @@ impl<K: Debug + Ord + Clone + Default> BPlusStorage<K> {
     }
 }
 
-impl<K: Clone + Ord + std::hash::Hash + Debug + Default + Send + Sync + 'static> Database<K, DataContainer<()>> for BPlusStorage<K> {
+impl<K: Clone + Ord + std::hash::Hash + Debug + Default + Send + Sync + 'static>
+    Database<K, DataContainer<()>> for BPlusStorage<K>
+{
     /// Inserts given value by given key in the B+ tree
     fn insert(&mut self, key: K, value: DataContainer<()>) -> io::Result<()> {
         let tree = self.tree.clone();
