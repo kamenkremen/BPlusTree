@@ -100,16 +100,16 @@ pub struct BPlus<K> {
 }
 
 /// Wrapper for BPlusTree with sync functions with async runtime
-pub struct BPlusStorage {
+pub struct BPlusStorage<K> {
     /// BPlusTree
-    tree: Arc<BPlus<Vec<u8>>>,
+    tree: Arc<BPlus<K>>,
     /// Async tokio runtime for operations
     runtime: Runtime,
     /// Currently inserting keys
-    keys_set: Arc<Mutex<HashSet<Vec<u8>>>>,
+    keys_set: Arc<Mutex<HashSet<K>>>,
 }
 
-impl BPlusStorage {
+impl<K: Debug + Ord + Clone + Default> BPlusStorage<K> {
     /// Creates new instance of B+ tree with given runtime, t and path
     /// runtime is tokio runtime
     /// t represents minimal and maximum quantity of keys in the node
@@ -124,9 +124,9 @@ impl BPlusStorage {
     }
 }
 
-impl Database<Vec<u8>, DataContainer<()>> for BPlusStorage {
+impl<K: Clone + Ord + std::hash::Hash + Debug + Default + Send + Sync + 'static> Database<K, DataContainer<()>> for BPlusStorage<K> {
     /// Inserts given value by given key in the B+ tree
-    fn insert(&mut self, key: Vec<u8>, value: DataContainer<()>) -> io::Result<()> {
+    fn insert(&mut self, key: K, value: DataContainer<()>) -> io::Result<()> {
         let tree = self.tree.clone();
 
         let value = match value.extract() {
@@ -145,7 +145,7 @@ impl Database<Vec<u8>, DataContainer<()>> for BPlusStorage {
     }
 
     /// Gets value by given key from B+ tree
-    fn get(&self, key: &Vec<u8>) -> io::Result<DataContainer<()>> {
+    fn get(&self, key: &K) -> io::Result<DataContainer<()>> {
         let tree = self.tree.clone();
         let set_clone = self.keys_set.clone();
 
@@ -161,7 +161,7 @@ impl Database<Vec<u8>, DataContainer<()>> for BPlusStorage {
     }
 
     /// Returns whether key is contained in the B+ tree or not
-    fn contains(&self, key: &Vec<u8>) -> bool {
+    fn contains(&self, key: &K) -> bool {
         self.get(key).is_ok()
     }
 }
@@ -253,6 +253,9 @@ impl<K: Default + Ord + Clone + Debug + Sized> BPlus<K> {
                     split_result = if leaf.entries.len() == 2 * self.t {
                         Some(current_node.split(self.t))
                     } else {
+                        while !guards.is_empty() {
+                            drop(guards.pop_front().unwrap());
+                        }
                         None
                     };
 
