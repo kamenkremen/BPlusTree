@@ -108,7 +108,7 @@ async fn test_same_keys_inserted() {
     let tempdir = TempDir::new("10").unwrap();
     let tree: BPlus<usize> = BPlus::new(2, PathBuf::new().join(tempdir.path())).unwrap();
     let mut keys = vec![];
-    for _ in 1..1000 {
+    for _ in 1..100000 {
         let key: usize = rand::random::<usize>() % 10000;
         keys.push(key);
     }
@@ -126,6 +126,24 @@ async fn test_same_keys_inserted() {
     for i in 1..255 {
         assert_eq!(vec![i - 1u8], tree.get(&key).await.unwrap());
         tree.insert(key, vec![i]).await.unwrap();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_same_10k_keys_inserted() {
+    let tempdir = TempDir::new("same_10k_keys").unwrap();
+    let tree: BPlus<usize> = BPlus::new(2, PathBuf::new().join(tempdir.path())).unwrap();
+
+    for i in 0..10000 {
+        tree.insert(i, vec![i as u8]).await.unwrap();
+    }
+
+    for i in 0..10000 {
+        tree.insert(i, vec![i as u8]).await.unwrap();
+    }
+
+    for key in 1..10000 {
+        assert_eq!(vec![key as u8], tree.get(&key).await.unwrap());
     }
 }
 

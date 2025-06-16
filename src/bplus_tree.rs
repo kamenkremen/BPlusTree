@@ -2,17 +2,21 @@ use std::{
     collections::{HashSet, VecDeque},
     fmt::Debug,
     fs::{create_dir_all, File},
-    io::{self, ErrorKind},
+    io::{self, BufReader, BufWriter, ErrorKind},
     mem,
     os::unix::fs::FileExt,
-    path::PathBuf,
+    path::{Path, PathBuf},
     rc::Rc,
     sync::{
-        atomic::{AtomicU64, AtomicUsize},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
         Arc, Mutex,
     },
     thread, time,
 };
+
+use async_recursion::async_recursion;
+
+use serde::{Deserialize, Serialize};
 
 use chunkfs::{Data, DataContainer, Database};
 use tokio::{self, runtime::Runtime, sync::RwLock};
@@ -21,8 +25,119 @@ const DEFAULT_MAX_FILE_SIZE: u64 = 2 << 20;
 
 extern crate chunkfs;
 
+#[derive(Serialize, Deserialize)]
+struct SerializableBPlus<K> {
+    t: usize,
+    path: PathBuf,
+    file_number: usize,
+    offset: u64,
+    max_file_size: u64,
+    root: SerializableNode<K>,
+}
+
+#[derive(Serialize, Deserialize)]
+enum SerializableNode<K> {
+    Internal(SerializableInternalNode<K>),
+    Leaf(SerializableLeaf<K>),
+}
+
+#[derive(Serialize, Deserialize)]
+struct SerializableInternalNode<K> {
+    keys: Vec<K>,
+    children: Vec<SerializableNode<K>>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SerializableLeaf<K> {
+    entries: Vec<(K, ChunkHandler)>,
+}
+
+impl<K: Clone + Send + Sync> BPlus<K> {
+    async fn serialize(&self) -> SerializableBPlus<K> {
+        SerializableBPlus {
+            t: self.t,
+            path: self.path.clone(),
+            file_number: self.file_number.load(Ordering::SeqCst),
+            offset: self.offset.load(Ordering::SeqCst),
+            max_file_size: self.max_file_size,
+            root: self.root.read().await.serialize().await,
+        }
+    }
+}
+
+impl<K: Clone + Send + Sync> Node<K> {
+    #[async_recursion]
+    async fn serialize(&self) -> SerializableNode<K> {
+        match self {
+            Node::Internal(internal) => {
+                let keys = internal.keys.iter().map(|k| (**k).clone()).collect();
+
+                let children_clone = internal.children.clone();
+                let mut children = Vec::new();
+                for child in children_clone {
+                    children.push(child.read().await.serialize().await);
+                }
+
+                SerializableNode::Internal(SerializableInternalNode { keys, children })
+            }
+            Node::Leaf(leaf) => SerializableNode::Leaf(SerializableLeaf {
+                entries: leaf
+                    .entries
+                    .iter()
+                    .map(|(k, v)| ((**k).clone(), v.clone()))
+                    .collect(),
+            }),
+        }
+    }
+}
+
+impl<K: Ord + Default + Clone + Debug + Send + Sync + Serialize + for<'de> Deserialize<'de>>
+    SerializableBPlus<K>
+{
+    async fn deserialize(self) -> BPlus<K> {
+        let root = Arc::new(RwLock::new(Node::from(self.root)));
+
+        let tree = BPlus {
+            root: root.clone(),
+            t: self.t,
+            path: self.path.clone(),
+            file_number: AtomicUsize::new(self.file_number),
+            offset: AtomicU64::new(self.offset),
+            current_file: BPlus::<K>::open_current_file(&self.path, self.file_number).unwrap(),
+            max_file_size: self.max_file_size,
+            latch: RwLock::new(()),
+        };
+
+        tree.rebuild_links().await;
+        tree
+    }
+}
+
+impl<K> From<SerializableNode<K>> for Node<K> {
+    fn from(node: SerializableNode<K>) -> Self {
+        match node {
+            SerializableNode::Internal(internal) => Node::Internal(InternalNode {
+                keys: internal.keys.into_iter().map(Arc::new).collect(),
+                children: internal
+                    .children
+                    .into_iter()
+                    .map(|c| Arc::new(RwLock::new(Node::from(c))))
+                    .collect(),
+            }),
+            SerializableNode::Leaf(leaf) => Node::Leaf(Leaf {
+                entries: leaf
+                    .entries
+                    .into_iter()
+                    .map(|(k, v)| (Arc::new(k), v))
+                    .collect(),
+                next: None,
+            }),
+        }
+    }
+}
+
 /// Structure that handles chunks written in files.
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Default, Debug, Serialize, Deserialize)]
 pub struct ChunkHandler {
     /// Path to file with chunk.
     path: PathBuf,
@@ -109,7 +224,9 @@ pub struct BPlusStorage<K> {
     keys_set: Arc<Mutex<HashSet<K>>>,
 }
 
-impl<K: Debug + Ord + Clone + Default> BPlusStorage<K> {
+impl<K: Debug + Ord + Clone + Default + Serialize + for<'de> Deserialize<'de> + Sync + Send>
+    BPlusStorage<K>
+{
     /// Creates new instance of B+ tree with given runtime, t and path
     /// runtime is tokio runtime
     /// t represents minimal and maximum quantity of keys in the node
@@ -124,8 +241,18 @@ impl<K: Debug + Ord + Clone + Default> BPlusStorage<K> {
     }
 }
 
-impl<K: Clone + Ord + std::hash::Hash + Debug + Default + Send + Sync + 'static>
-    Database<K, DataContainer<()>> for BPlusStorage<K>
+impl<
+        K: Clone
+            + Ord
+            + std::hash::Hash
+            + Debug
+            + Default
+            + Send
+            + Sync
+            + Serialize
+            + for<'de> Deserialize<'de>
+            + 'static,
+    > Database<K, DataContainer<()>> for BPlusStorage<K>
 {
     /// Inserts given value by given key in the B+ tree
     fn insert(&mut self, key: K, value: DataContainer<()>) -> io::Result<()> {
@@ -169,7 +296,10 @@ impl<K: Clone + Ord + std::hash::Hash + Debug + Default + Send + Sync + 'static>
 }
 
 #[allow(dead_code)]
-impl<K: Default + Ord + Clone + Debug + Sized> BPlus<K> {
+impl<
+        K: Default + Ord + Clone + Debug + Sized + Serialize + for<'de> Deserialize<'de> + Sync + Send,
+    > BPlus<K>
+{
     /// Creates new instance of B+ tree with given t and path
     /// t represents minimal and maximal quantity of keys in node
     /// All data will be written in files in directory by given path
@@ -264,6 +394,8 @@ impl<K: Default + Ord + Clone + Debug + Sized> BPlus<K> {
                     // if path is empty, then current node is root
                     if path.is_empty() {
                         guards.push_back(current_node);
+                    } else {
+                        drop(current_node);
                     }
 
                     break;
@@ -276,7 +408,7 @@ impl<K: Default + Ord + Clone + Debug + Sized> BPlus<K> {
 
                     // droping guards if nodes are not going to be changed
                     if internal.keys.len() != 2 * self.t - 2 {
-                        while guards.len() > 1 {
+                        while !guards.is_empty() {
                             drop(guards.pop_front().unwrap());
                         }
                     }
@@ -347,12 +479,18 @@ impl<K: Default + Ord + Clone + Debug + Sized> BPlus<K> {
                             *node = new_root;
                         }
                     }
+                    drop(node);
                 }
             }
         }
 
+        for guard in guards {
+            drop(guard);
+        }
+
         Ok(())
     }
+
     #[allow(unused_variables)]
     fn remove(&mut self, key: Rc<K>) -> io::Result<()> {
         unimplemented!()
@@ -404,6 +542,92 @@ impl<K: Default + Ord + Clone + Debug + Sized> BPlus<K> {
             }
             prev_guard = Some(node);
         }
+    }
+
+    async fn rebuild_links(&self) {
+        let leaves = self.collect_leaves().await;
+        if self.offset.load(Ordering::Acquire) == 0 && self.file_number.load(Ordering::Acquire) == 0
+        {
+            return;
+        }
+
+        let key_futures: Vec<_> = leaves
+            .iter()
+            .map(|leaf| {
+                let leaf = Arc::clone(leaf);
+                async move {
+                    let guard = leaf.read().await;
+                    match &*guard {
+                        Node::Leaf(leaf_data) => leaf_data.entries[0].0.clone(),
+                        _ => unreachable!(),
+                    }
+                }
+            })
+            .collect();
+
+        let keys = futures::future::join_all(key_futures).await;
+
+        let mut sorted_leaves: Vec<_> = keys.into_iter().zip(leaves.into_iter()).collect();
+
+        sorted_leaves.sort_by(|(a, _), (b, _)| a.cmp(b));
+
+        for i in 0..sorted_leaves.len() - 1 {
+            let current = &sorted_leaves[i].1;
+            let next = sorted_leaves[i + 1].1.clone();
+
+            let mut guard = current.write().await;
+            if let Node::Leaf(leaf) = &mut *guard {
+                leaf.next = Some(next);
+            }
+        }
+    }
+
+    async fn collect_leaves(&self) -> Vec<Arc<RwLock<Node<K>>>> {
+        let mut leaves = Vec::new();
+        let mut queue = VecDeque::new();
+        queue.push_back(self.root.clone());
+
+        while let Some(node) = queue.pop_front() {
+            let guard = node.read().await;
+            match &*guard {
+                Node::Internal(internal) => {
+                    for child in &internal.children {
+                        queue.push_back(child.clone());
+                    }
+                }
+                Node::Leaf(_) => {
+                    leaves.push(node.clone());
+                }
+            }
+        }
+
+        leaves
+    }
+
+    fn open_current_file(path: &Path, number: usize) -> io::Result<Arc<RwLock<File>>> {
+        Ok(Arc::new(RwLock::new(
+            File::open(path.join(number.to_string())).unwrap(),
+        )))
+    }
+
+    /// Saves this tree by the provided path
+    pub async fn save(&self, path: &Path) -> io::Result<()> {
+        let _guard = self.latch.write().await;
+        let serializable = self.serialize().await;
+        let file = File::create(path)?;
+        let writer = BufWriter::new(file);
+        bincode::serialize_into(writer, &serializable)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+    }
+
+    /// Loads tree from file by provided path
+    pub async fn load(path: &Path) -> io::Result<Self> {
+        let file = File::open(path)?;
+        let reader = BufReader::new(file);
+        let serializable: SerializableBPlus<K> = bincode::deserialize_from(reader)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+
+        Ok(serializable.deserialize().await)
     }
 }
 
@@ -538,5 +762,78 @@ mod tests {
             tree.file_number.load(std::sync::atomic::Ordering::SeqCst) >= 1,
             "Should create multiple files"
         );
+    }
+
+    #[tokio::test]
+    async fn test_save_load_empty_tree() {
+        let tempdir = TempDir::new().unwrap();
+        let tree_path = tempdir.path().join("empty_tree.bin");
+
+        let tree = BPlus::<u64>::new(2, tempdir.path().into()).unwrap();
+
+        tree.save(&tree_path).await.unwrap();
+
+        let loaded_tree = BPlus::<u64>::load(&tree_path).await.unwrap();
+
+        assert_eq!(tree.t, loaded_tree.t);
+        assert_eq!(tree.path, loaded_tree.path);
+        assert_eq!(
+            tree.file_number.load(Ordering::SeqCst),
+            loaded_tree.file_number.load(Ordering::SeqCst)
+        );
+        assert_eq!(
+            tree.offset.load(Ordering::SeqCst),
+            loaded_tree.offset.load(Ordering::SeqCst)
+        );
+        assert!(loaded_tree.get(&42).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_save_load_small_tree() {
+        let tempdir = TempDir::new().unwrap();
+        let tree_path = tempdir.path().join("small_tree.bin");
+
+        let tree = BPlus::<u64>::new(2, tempdir.path().into()).unwrap();
+        tree.insert(10, vec![1, 2, 3]).await.unwrap();
+        tree.insert(20, vec![4, 5, 6]).await.unwrap();
+        tree.insert(5, vec![0]).await.unwrap();
+
+        tree.save(&tree_path).await.unwrap();
+
+        let loaded_tree = BPlus::<u64>::load(&tree_path).await.unwrap();
+
+        assert_eq!(loaded_tree.get(&10).await.unwrap(), vec![1, 2, 3]);
+        assert_eq!(loaded_tree.get(&20).await.unwrap(), vec![4, 5, 6]);
+        assert_eq!(loaded_tree.get(&5).await.unwrap(), vec![0]);
+        assert!(loaded_tree.get(&99).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_save_load_large_tree() {
+        let tempdir = TempDir::with_prefix("large_load_save").unwrap();
+        let tree_path = tempdir.path().join("large_tree.bin");
+        let mut tree = BPlus::<u64>::new(2, tempdir.path().into()).unwrap();
+        tree.max_file_size = 100;
+
+        for i in 0..100000 {
+            tree.insert(i, vec![(i % 256) as u8; 1]).await.unwrap();
+        }
+        tree.save(&tree_path).await.unwrap();
+
+        let loaded_tree = BPlus::<u64>::load(&tree_path).await.unwrap();
+
+        use rand::seq::SliceRandom;
+        use rand::thread_rng;
+
+        let mut rng = thread_rng();
+        let mut keys: Vec<u64> = (0..10_000).collect();
+        keys.shuffle(&mut rng);
+
+        for key in keys.iter().take(100) {
+            let expected = vec![(*key % 256) as u8; 1];
+            assert_eq!(loaded_tree.get(key).await.unwrap(), expected);
+        }
+
+        assert!(loaded_tree.get(&100_000).await.is_err());
     }
 }
