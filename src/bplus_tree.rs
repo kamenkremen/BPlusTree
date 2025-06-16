@@ -616,16 +616,15 @@ impl<
         let serializable = self.serialize().await;
         let file = File::create(path)?;
         let writer = BufWriter::new(file);
-        bincode::serialize_into(writer, &serializable)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+        bincode::serialize_into(writer, &serializable).map_err(io::Error::other)
     }
 
     /// Loads tree from file by provided path
     pub async fn load(path: &Path) -> io::Result<Self> {
         let file = File::open(path)?;
         let reader = BufReader::new(file);
-        let serializable: SerializableBPlus<K> = bincode::deserialize_from(reader)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let serializable: SerializableBPlus<K> =
+            bincode::deserialize_from(reader).map_err(io::Error::other)?;
 
         Ok(serializable.deserialize().await)
     }
