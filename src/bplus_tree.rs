@@ -360,10 +360,17 @@ impl<
     ///
     /// Returns Err(_) if file could not be created
     pub async fn insert(&self, key: K, value: Vec<u8>) -> io::Result<()> {
-        let key = Arc::new(key);
         let value = self.get_chunk_handler(value).await.unwrap();
         let mut path = Vec::new(); // Path to leaf
+        if self
+            .optimistic_insert(key.clone(), value.clone())
+            .await
+            .is_ok()
+        {
+            return Ok(());
+        }
         let mut latch_guard = Some(self.latch.write());
+        let key = Arc::new(key);
         let mut current = self.root.clone();
         let mut split_result;
         let mut guards = VecDeque::new();
@@ -542,6 +549,76 @@ impl<
             }
             prev_guard = Some(node);
         }
+    }
+
+    /// For optimistic latch crabbing
+    /// Insert firstly implies that leaf is safe
+    /// If it is safe, than inserts(without write locks on other nodes) to the leaf and returns Ok
+    /// Else, returns Err
+    /// Also returns Err if root is leaf
+    async fn optimistic_insert(&self, key: K, value: ChunkHandler) -> Result<(), ()> {
+        let mut latch_guard = Some(self.latch.read());
+        let mut current = self.root.clone();
+        let key = Arc::new(key);
+
+        let mut prev_guard = None;
+        loop {
+            let node = current.read_owned().await;
+            if let Some(guard) = latch_guard {
+                drop(guard);
+                latch_guard = None;
+                if let Node::Leaf(_) = &*node {
+                    return Err(());
+                }
+            }
+
+            if let Node::Leaf(_) = node.clone() {
+                break;
+            }
+
+            if prev_guard.is_some() {
+                drop(prev_guard);
+            }
+
+            match &*node {
+                Node::Leaf(_leaf) => {
+                    unreachable!()
+                }
+                Node::Internal(internal) => {
+                    let pos = match internal.keys.binary_search(&key) {
+                        Ok(pos) => pos + 1,
+                        Err(pos) => pos,
+                    };
+
+                    let next_node = internal.children[pos].clone();
+
+                    current = next_node;
+                }
+            }
+            prev_guard = Some(node);
+        }
+
+        let current_node_guard = if let Node::Internal(internal) = &*prev_guard.take().unwrap() {
+            let pos = match internal.keys.binary_search(&key) {
+                Ok(pos) => pos + 1,
+                Err(pos) => pos,
+            };
+            internal.clone().children[pos].clone()
+        } else {
+            unreachable!();
+        };
+        let mut current_node = current_node_guard.write().await;
+        if let Node::Leaf(leaf) = &mut *current_node {
+            if leaf.entries.len() == 2 * self.t - 1 {
+                return Err(());
+            }
+            match leaf.entries.binary_search_by(|(k, _)| k.cmp(&key)) {
+                Ok(pos) => leaf.entries[pos] = (key.clone(), value),
+                Err(pos) => leaf.entries.insert(pos, (key.clone(), value)),
+            };
+        }
+
+        Ok(())
     }
 
     async fn rebuild_links(&self) {
