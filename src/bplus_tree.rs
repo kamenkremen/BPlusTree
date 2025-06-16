@@ -362,6 +362,7 @@ impl<
     pub async fn insert(&self, key: K, value: Vec<u8>) -> io::Result<()> {
         let value = self.get_chunk_handler(value).await.unwrap();
         let mut path = Vec::new(); // Path to leaf
+                                   // Insert that implies that target leaf is safe. Otherwise returns Err()
         if self
             .optimistic_insert(key.clone(), value.clone())
             .await
@@ -608,6 +609,7 @@ impl<
             unreachable!();
         };
         let mut current_node = current_node_guard.write().await;
+
         if let Node::Leaf(leaf) = &mut *current_node {
             if leaf.entries.len() == 2 * self.t - 1 {
                 return Err(());
