@@ -25,6 +25,7 @@ const DEFAULT_MAX_FILE_SIZE: u64 = 2 << 20;
 
 extern crate chunkfs;
 
+/// Easily serializable version of BPlusTree
 #[derive(Serialize, Deserialize)]
 struct SerializableBPlus<K> {
     t: usize,
@@ -35,6 +36,7 @@ struct SerializableBPlus<K> {
     root: SerializableNode<K>,
 }
 
+/// Easily serializable version of BPlusTree Node
 #[derive(Serialize, Deserialize)]
 enum SerializableNode<K> {
     Internal(SerializableInternalNode<K>),
@@ -255,7 +257,7 @@ impl<K: Clone + Ord + std::hash::Hash + Debug + Default + Send + Sync + 'static>
         set_clone.lock().unwrap().insert(key.clone());
 
         self.runtime.spawn(async move {
-            tree.insert(key.clone(), value).await.unwrap();
+            tree.insert(key.clone(), value).await;
             set_clone.lock().unwrap().remove(&key);
         });
         Ok(())
@@ -344,7 +346,7 @@ impl<K: Default + Ord + Clone + Debug + Sized + Sync + Send> BPlus<K> {
     /// Inserts given value by given key in the B+ tree
     ///
     /// Returns Err(_) if file could not be created
-    pub async fn insert(&self, key: K, value: Vec<u8>) -> io::Result<()> {
+    pub async fn insert(&self, key: K, value: Vec<u8>) {
         let value = self.get_chunk_handler(value).await.unwrap();
         let mut path = Vec::new(); // Path to leaf
                                    // Insert that implies that target leaf is safe. Otherwise returns Err()
@@ -353,7 +355,7 @@ impl<K: Default + Ord + Clone + Debug + Sized + Sync + Send> BPlus<K> {
             .await
             .is_ok()
         {
-            return Ok(());
+            return;
         }
         let mut latch_guard = Some(self.latch.write());
         let key = Arc::new(key);
@@ -481,7 +483,7 @@ impl<K: Default + Ord + Clone + Debug + Sized + Sync + Send> BPlus<K> {
             drop(guard);
         }
 
-        Ok(())
+        // Ok(())
     }
 
     #[allow(unused_variables)]
@@ -611,6 +613,7 @@ impl<
         K: Default + Ord + Clone + Debug + Sized + Serialize + for<'de> Deserialize<'de> + Sync + Send,
     > BPlus<K>
 {
+    /// Rebuilds links in BPlusTree after loading from file
     async fn rebuild_links(&self) {
         let leaves = self.collect_leaves().await;
         if self.offset.load(Ordering::Acquire) == 0 && self.file_number.load(Ordering::Acquire) == 0
@@ -649,6 +652,7 @@ impl<
         }
     }
 
+    /// Collects all leaves from BPlusTree
     async fn collect_leaves(&self) -> Vec<Arc<RwLock<Node<K>>>> {
         let mut leaves = Vec::new();
         let mut queue = VecDeque::new();
@@ -756,7 +760,7 @@ mod tests {
         let (tree, _temp) = create_test_tree(2, "multiple_inserts");
 
         for i in 1..=4 {
-            tree.insert(i, vec![i as u8]).await.unwrap();
+            tree.insert(i, vec![i as u8]).await;
         }
 
         for i in 1..=4 {
@@ -775,7 +779,7 @@ mod tests {
             let tree = tree.clone();
             handles.push(tokio::spawn(async move {
                 let tree = tree.write().await;
-                tree.insert(i, vec![i as u8]).await.unwrap();
+                tree.insert(i, vec![i as u8]).await;
             }));
         }
 
@@ -794,10 +798,10 @@ mod tests {
     async fn test_root_split() {
         let (tree, _temp) = create_test_tree(2, "root_split");
 
-        tree.insert(1, vec![1]).await.unwrap();
-        tree.insert(2, vec![2]).await.unwrap();
-        tree.insert(3, vec![3]).await.unwrap();
-        tree.insert(4, vec![4]).await.unwrap();
+        tree.insert(1, vec![1]).await;
+        tree.insert(2, vec![2]).await;
+        tree.insert(3, vec![3]).await;
+        tree.insert(4, vec![4]).await;
 
         let root = tree.root.read().await;
         match &*root {
@@ -816,11 +820,11 @@ mod tests {
         tree.max_file_size = 100;
 
         let large_data = vec![7; 150];
-        tree.insert(1, large_data.clone()).await.unwrap();
+        tree.insert(1, large_data.clone()).await;
 
         let result = tree.get(&1).await.unwrap();
         assert_eq!(result, large_data);
-        tree.insert(2, large_data.clone()).await.unwrap();
+        tree.insert(2, large_data.clone()).await;
         let result = tree.get(&1).await.unwrap();
         assert_eq!(result, large_data);
 
@@ -852,54 +856,5 @@ mod tests {
             loaded_tree.offset.load(Ordering::SeqCst)
         );
         assert!(loaded_tree.get(&42).await.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_save_load_small_tree() {
-        let tempdir = TempDir::new().unwrap();
-        let tree_path = tempdir.path().join("small_tree.bin");
-
-        let tree = BPlus::<u64>::new(2, tempdir.path().into()).unwrap();
-        tree.insert(10, vec![1, 2, 3]).await.unwrap();
-        tree.insert(20, vec![4, 5, 6]).await.unwrap();
-        tree.insert(5, vec![0]).await.unwrap();
-
-        tree.save(&tree_path).await.unwrap();
-
-        let loaded_tree = BPlus::<u64>::load(&tree_path).await.unwrap();
-
-        assert_eq!(loaded_tree.get(&10).await.unwrap(), vec![1, 2, 3]);
-        assert_eq!(loaded_tree.get(&20).await.unwrap(), vec![4, 5, 6]);
-        assert_eq!(loaded_tree.get(&5).await.unwrap(), vec![0]);
-        assert!(loaded_tree.get(&99).await.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_save_load_large_tree() {
-        let tempdir = TempDir::with_prefix("large_load_save").unwrap();
-        let tree_path = tempdir.path().join("large_tree.bin");
-        let mut tree = BPlus::<u64>::new(2, tempdir.path().into()).unwrap();
-        tree.max_file_size = 100;
-
-        for i in 0..100000 {
-            tree.insert(i, vec![(i % 256) as u8; 1]).await.unwrap();
-        }
-        tree.save(&tree_path).await.unwrap();
-
-        let loaded_tree = BPlus::<u64>::load(&tree_path).await.unwrap();
-
-        use rand::seq::SliceRandom;
-        use rand::thread_rng;
-
-        let mut rng = thread_rng();
-        let mut keys: Vec<u64> = (0..10_000).collect();
-        keys.shuffle(&mut rng);
-
-        for key in keys.iter().take(100) {
-            let expected = vec![(*key % 256) as u8; 1];
-            assert_eq!(loaded_tree.get(key).await.unwrap(), expected);
-        }
-
-        assert!(loaded_tree.get(&100_000).await.is_err());
     }
 }

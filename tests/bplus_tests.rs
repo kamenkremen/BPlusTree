@@ -9,7 +9,7 @@ use tempdir::TempDir;
 async fn test_non_existent_key() {
     let tempdir = TempDir::new("non_existent").unwrap();
     let tree: BPlus<usize> = BPlus::new(2, tempdir.path().into()).unwrap();
-    tree.insert(1, vec![1]).await.unwrap();
+    tree.insert(1, vec![1]).await;
     assert!(tree.get(&2).await.is_err());
 }
 
@@ -18,8 +18,8 @@ async fn test_overwrite_existing_key() {
     let tempdir = TempDir::new("overwrite").unwrap();
     let tree: BPlus<usize> = BPlus::new(2, tempdir.path().into()).unwrap();
 
-    tree.insert(1, vec![1]).await.unwrap();
-    tree.insert(1, vec![42]).await.unwrap();
+    tree.insert(1, vec![1]).await;
+    tree.insert(1, vec![42]).await;
 
     assert_eq!(tree.get(&1).await.unwrap(), vec![42]);
 }
@@ -30,7 +30,7 @@ async fn test_insert_and_find() {
     let path = PathBuf::new().join(tempdir.path());
     let tree: BPlus<usize> = BPlus::new(2, path).unwrap();
     for i in 1..6 {
-        tree.insert(i, vec![i as u8; 1]).await.unwrap();
+        tree.insert(i, vec![i as u8; 1]).await;
     }
 
     for i in 1..6 {
@@ -45,7 +45,7 @@ async fn test_insert_and_find_many_nodes() {
     let path = PathBuf::new().join(tempdir.path());
     let tree: BPlus<usize> = BPlus::new(2, path).unwrap();
     for i in 1..255 {
-        tree.insert(i, vec![i as u8; 1]).await.unwrap();
+        tree.insert(i, vec![i as u8; 1]).await;
     }
 
     for i in 1..255 {
@@ -59,7 +59,7 @@ async fn test_large_data_consecutive_numbers() {
     let path = PathBuf::new().join(tempdir.path());
     let tree: BPlus<usize> = BPlus::new(100, path).unwrap();
     for i in 1..10000 {
-        tree.insert(i, vec![i as u8; 1064]).await.unwrap();
+        tree.insert(i, vec![i as u8; 1064]).await;
     }
     for i in 1..10000 {
         let a = tree.get(&i).await.unwrap();
@@ -75,7 +75,7 @@ async fn test_large_data() {
     let mut htable = HashMap::<usize, Vec<u8>>::new();
     for i in 1..10000 {
         let key = i * 113;
-        tree.insert(key, vec![key as u8; 1064]).await.unwrap();
+        tree.insert(key, vec![key as u8; 1064]).await;
         htable.insert(key, vec![key as u8; 1064]);
     }
     for (key, value) in htable {
@@ -88,12 +88,12 @@ async fn test_couple_of_same_keys_inserted() {
     let tempdir = TempDir::new("8").unwrap();
     let tree: BPlus<usize> = BPlus::new(2, PathBuf::new().join(tempdir.path())).unwrap();
     for i in 1..100 {
-        tree.insert(i, vec![1u8]).await.unwrap();
+        tree.insert(i, vec![1u8]).await;
     }
 
     for i in 1..100 {
         for j in 1..100 {
-            tree.insert(i, vec![j as u8]).await.unwrap();
+            tree.insert(i, vec![j as u8]).await;
         }
     }
     for i in 1..100 {
@@ -114,7 +114,7 @@ async fn test_same_keys_inserted() {
     }
 
     for key in keys.clone() {
-        tree.insert(key, vec![key as u8]).await.unwrap();
+        tree.insert(key, vec![key as u8]).await;
     }
 
     for key in keys {
@@ -122,10 +122,10 @@ async fn test_same_keys_inserted() {
     }
 
     let key: usize = rand::random();
-    tree.insert(key, vec![0u8]).await.unwrap();
+    tree.insert(key, vec![0u8]).await;
     for i in 1..255 {
         assert_eq!(vec![i - 1u8], tree.get(&key).await.unwrap());
-        tree.insert(key, vec![i]).await.unwrap();
+        tree.insert(key, vec![i]).await;
     }
 }
 
@@ -135,11 +135,11 @@ async fn test_same_10k_keys_inserted() {
     let tree: BPlus<usize> = BPlus::new(2, PathBuf::new().join(tempdir.path())).unwrap();
 
     for i in 0..10000 {
-        tree.insert(i, vec![i as u8]).await.unwrap();
+        tree.insert(i, vec![i as u8]).await;
     }
 
     for i in 0..10000 {
-        tree.insert(i, vec![i as u8]).await.unwrap();
+        tree.insert(i, vec![i as u8]).await;
     }
 
     for key in 1..10000 {
@@ -158,7 +158,7 @@ async fn test_empty_tree() {
 async fn test_single_entry() {
     let tempdir = TempDir::new("single").unwrap();
     let tree = BPlus::new(2, tempdir.path().into()).unwrap();
-    tree.insert(42, vec![1, 2, 3]).await.unwrap();
+    tree.insert(42, vec![1, 2, 3]).await;
     assert_eq!(tree.get(&42).await.unwrap(), vec![1, 2, 3]);
 }
 
@@ -168,7 +168,7 @@ async fn test_reverse_order_insert() {
     let tree: BPlus<usize> = BPlus::new(3, tempdir.path().into()).unwrap();
 
     for i in (1..100).rev() {
-        tree.insert(i, vec![i as u8]).await.unwrap();
+        tree.insert(i, vec![i as u8]).await;
     }
 
     for i in 1..100 {
@@ -182,7 +182,7 @@ async fn test_minimal_degree() {
     let tree = BPlus::new(1, tempdir.path().into()).unwrap();
 
     for i in 1..=10 {
-        tree.insert(i, vec![i as u8]).await.unwrap();
+        tree.insert(i, vec![i as u8]).await;
     }
 
     assert_eq!(tree.get(&5).await.unwrap(), vec![5]);
@@ -194,8 +194,8 @@ async fn test_key_duplication() {
     let tree = BPlus::new(2, tempdir.path().into()).unwrap();
 
     for _ in 0..10 {
-        tree.insert(42, vec![1]).await.unwrap();
-        tree.insert(42, vec![2]).await.unwrap();
+        tree.insert(42, vec![1]).await;
+        tree.insert(42, vec![2]).await;
     }
 
     assert_eq!(tree.get(&42).await.unwrap(), vec![2]);
@@ -206,12 +206,8 @@ async fn test_string_keys() {
     let tempdir = TempDir::new("string_keys").unwrap();
     let tree = BPlus::new(2, tempdir.path().into()).unwrap();
 
-    tree.insert("apple".to_string(), b"fruit".to_vec())
-        .await
-        .unwrap();
-    tree.insert("banana".to_string(), b"yellow".to_vec())
-        .await
-        .unwrap();
+    tree.insert("apple".to_string(), b"fruit".to_vec()).await;
+    tree.insert("banana".to_string(), b"yellow".to_vec()).await;
 
     assert_eq!(tree.get(&"apple".to_string()).await.unwrap(), b"fruit");
     assert_eq!(tree.get(&"banana".to_string()).await.unwrap(), b"yellow");
@@ -223,7 +219,7 @@ async fn test_stress_1m_entries() {
     let tree = BPlus::new(100, tempdir.path().into()).unwrap();
 
     for i in 0..1_000_000 {
-        tree.insert(i, vec![i as u8]).await.unwrap();
+        tree.insert(i, vec![i as u8]).await;
     }
 
     for i in 0..1_000_000 {
@@ -252,7 +248,7 @@ async fn test_stress_1m_entries_concurrent() {
 
             for i in 0..entries_per_task {
                 let key = (task_id * entries_per_task) + i;
-                tree.insert(key, vec![key as u8]).await.unwrap();
+                tree.insert(key, vec![key as u8]).await;
             }
         }));
     }
@@ -287,8 +283,48 @@ async fn test_find_nonexistent_after_splits() {
     let tree = BPlus::new(2, tempdir.path().into()).unwrap();
 
     for i in 0..1000 {
-        tree.insert(i, vec![1]).await.unwrap();
+        tree.insert(i, vec![1]).await;
     }
 
     assert!(tree.get(&1001).await.is_err());
+}
+#[tokio::test]
+async fn test_save_load_small_tree() {
+    let tempdir = TempDir::new("saveload_small").unwrap();
+    let tree_path = tempdir.path().join("small_tree.bin");
+
+    let tree = BPlus::<u64>::new(2, tempdir.path().into()).unwrap();
+    tree.insert(10, vec![1, 2, 3]).await;
+    tree.insert(20, vec![4, 5, 6]).await;
+    tree.insert(5, vec![0]).await;
+
+    tree.save(&tree_path).await.unwrap();
+
+    let loaded_tree = BPlus::<u64>::load(&tree_path).await.unwrap();
+
+    assert_eq!(loaded_tree.get(&10).await.unwrap(), vec![1, 2, 3]);
+    assert_eq!(loaded_tree.get(&20).await.unwrap(), vec![4, 5, 6]);
+    assert_eq!(loaded_tree.get(&5).await.unwrap(), vec![0]);
+    assert!(loaded_tree.get(&99).await.is_err());
+}
+
+#[tokio::test]
+async fn test_save_load_large_tree() {
+    let tempdir = TempDir::new("large_load_save").unwrap();
+    let tree_path = tempdir.path().join("large_tree.bin");
+    let mut tree = BPlus::<u64>::new(2, tempdir.path().into()).unwrap();
+
+    for i in 0..100000 {
+        tree.insert(i, vec![(i % 256) as u8; 200]).await;
+    }
+    tree.save(&tree_path).await.unwrap();
+
+    let loaded_tree = BPlus::<u64>::load(&tree_path).await.unwrap();
+
+    for key in 0..100000 {
+        let expected = vec![(key % 256) as u8; 200];
+        assert_eq!(loaded_tree.get(&key).await.unwrap(), expected);
+    }
+
+    assert!(loaded_tree.get(&100_000).await.is_err());
 }
