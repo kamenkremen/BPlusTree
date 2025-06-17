@@ -224,9 +224,7 @@ pub struct BPlusStorage<K> {
     keys_set: Arc<Mutex<HashSet<K>>>,
 }
 
-impl<K: Debug + Ord + Clone + Default + Serialize + for<'de> Deserialize<'de> + Sync + Send>
-    BPlusStorage<K>
-{
+impl<K: Debug + Ord + Clone + Default + Sync + Send> BPlusStorage<K> {
     /// Creates new instance of B+ tree with given runtime, t and path
     /// runtime is tokio runtime
     /// t represents minimal and maximum quantity of keys in the node
@@ -241,18 +239,8 @@ impl<K: Debug + Ord + Clone + Default + Serialize + for<'de> Deserialize<'de> + 
     }
 }
 
-impl<
-        K: Clone
-            + Ord
-            + std::hash::Hash
-            + Debug
-            + Default
-            + Send
-            + Sync
-            + Serialize
-            + for<'de> Deserialize<'de>
-            + 'static,
-    > Database<K, DataContainer<()>> for BPlusStorage<K>
+impl<K: Clone + Ord + std::hash::Hash + Debug + Default + Send + Sync + 'static>
+    Database<K, DataContainer<()>> for BPlusStorage<K>
 {
     /// Inserts given value by given key in the B+ tree
     fn insert(&mut self, key: K, value: DataContainer<()>) -> io::Result<()> {
@@ -296,10 +284,7 @@ impl<
 }
 
 #[allow(dead_code)]
-impl<
-        K: Default + Ord + Clone + Debug + Sized + Serialize + for<'de> Deserialize<'de> + Sync + Send,
-    > BPlus<K>
-{
+impl<K: Default + Ord + Clone + Debug + Sized + Sync + Send> BPlus<K> {
     /// Creates new instance of B+ tree with given t and path
     /// t represents minimal and maximal quantity of keys in node
     /// All data will be written in files in directory by given path
@@ -563,66 +548,69 @@ impl<
         let key = Arc::new(key);
 
         let mut prev_guard = None;
+        let mut last_child_index = None;
+
         loop {
             let node = current.read_owned().await;
-            if let Some(guard) = latch_guard {
+
+            if let Some(guard) = latch_guard.take() {
                 drop(guard);
-                latch_guard = None;
-                if let Node::Leaf(_) = &*node {
+                if matches!(&*node, Node::Leaf(_)) {
                     return Err(());
                 }
             }
 
-            if let Node::Leaf(_) = node.clone() {
+            if matches!(&*node, Node::Leaf(_)) {
                 break;
             }
 
-            if prev_guard.is_some() {
-                drop(prev_guard);
-            }
-
-            match &*node {
-                Node::Leaf(_leaf) => {
-                    unreachable!()
-                }
-                Node::Internal(internal) => {
-                    let pos = match internal.keys.binary_search(&key) {
-                        Ok(pos) => pos + 1,
-                        Err(pos) => pos,
-                    };
-
-                    let next_node = internal.children[pos].clone();
-
-                    current = next_node;
-                }
-            }
             prev_guard = Some(node);
+
+            if let Node::Internal(internal) = prev_guard.as_deref().unwrap() {
+                let pos = match internal.keys.binary_search(&key) {
+                    Ok(pos) => pos + 1,
+                    Err(pos) => pos,
+                };
+                last_child_index = Some(pos);
+                current = internal.children[pos].clone();
+            } else {
+                unreachable!();
+            }
         }
 
-        let current_node_guard = if let Node::Internal(internal) = &*prev_guard.take().unwrap() {
-            let pos = match internal.keys.binary_search(&key) {
-                Ok(pos) => pos + 1,
-                Err(pos) => pos,
-            };
-            internal.clone().children[pos].clone()
-        } else {
-            unreachable!();
+        let leaf_lock = match prev_guard.take() {
+            Some(parent) => {
+                let pos = last_child_index.unwrap();
+                if let Node::Internal(internal) = &*parent {
+                    internal.children[pos].clone()
+                } else {
+                    unreachable!();
+                }
+            }
+            None => unreachable!(),
         };
-        let mut current_node = current_node_guard.write().await;
 
-        if let Node::Leaf(leaf) = &mut *current_node {
-            if leaf.entries.len() == 2 * self.t - 1 {
+        let mut leaf = leaf_lock.write().await;
+        if let Node::Leaf(leaf_node) = &mut *leaf {
+            if leaf_node.entries.len() == 2 * self.t - 1 {
                 return Err(());
             }
-            match leaf.entries.binary_search_by(|(k, _)| k.cmp(&key)) {
-                Ok(pos) => leaf.entries[pos] = (key.clone(), value),
-                Err(pos) => leaf.entries.insert(pos, (key.clone(), value)),
+
+            match leaf_node.entries.binary_search_by(|(k, _)| k.cmp(&key)) {
+                Ok(pos) => leaf_node.entries[pos].1 = value, // Обновляем без клонирования
+                Err(pos) => leaf_node.entries.insert(pos, (key.clone(), value)),
             };
+            Ok(())
+        } else {
+            unreachable!()
         }
-
-        Ok(())
     }
+}
 
+impl<
+        K: Default + Ord + Clone + Debug + Sized + Serialize + for<'de> Deserialize<'de> + Sync + Send,
+    > BPlus<K>
+{
     async fn rebuild_links(&self) {
         let leaves = self.collect_leaves().await;
         if self.offset.load(Ordering::Acquire) == 0 && self.file_number.load(Ordering::Acquire) == 0
