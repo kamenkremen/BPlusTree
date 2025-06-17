@@ -580,19 +580,19 @@ impl<K: Default + Ord + Clone + Debug + Sized + Sync + Send> BPlus<K> {
             }
         }
 
-        let leaf_lock = match prev_guard.take() {
-            Some(parent) => {
-                let pos = last_child_index.unwrap();
-                if let Node::Internal(internal) = &*parent {
-                    internal.children[pos].clone()
-                } else {
-                    unreachable!();
-                }
+        let prev_guard = prev_guard.unwrap();
+        let prev_node = prev_guard.clone();
+        let leaf_lock = {
+            let pos = last_child_index.unwrap();
+            if let Node::Internal(internal) = prev_node {
+                internal.children[pos].clone()
+            } else {
+                unreachable!();
             }
-            None => unreachable!(),
         };
 
         let mut leaf = leaf_lock.write().await;
+        drop(prev_guard);
         if let Node::Leaf(leaf_node) = &mut *leaf {
             if leaf_node.entries.len() == 2 * self.t - 1 {
                 return Err(());
