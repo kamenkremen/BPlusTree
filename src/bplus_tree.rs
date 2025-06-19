@@ -23,6 +23,15 @@ use tokio::{self, runtime::Runtime, sync::RwLock};
 
 const DEFAULT_MAX_FILE_SIZE: u64 = 2 << 20;
 
+pub trait BPlusKey: Default + Ord + Clone + Sized + Sync + Send {}
+impl<T: Default + Ord + Clone + Sized + Sync + Send> BPlusKey for T {}
+
+pub trait BPlusKeySerializable: BPlusKey + Serialize + for<'de> Deserialize<'de> {}
+impl<T: Default + Ord + Clone + Sized + Sync + Send + Serialize + for<'de> Deserialize<'de>>
+    BPlusKeySerializable for T
+{
+}
+
 extern crate chunkfs;
 
 /// Serializable version of BPlusTree
@@ -95,9 +104,7 @@ impl<K: Clone + Send + Sync> Node<K> {
     }
 }
 
-impl<K: Ord + Default + Clone + Debug + Send + Sync + Serialize + for<'de> Deserialize<'de>>
-    SerializableBPlus<K>
-{
+impl<K: BPlusKeySerializable> SerializableBPlus<K> {
     /// Returns new instance of BPlus with data from provided BPlusSerializable
     async fn deserialize(self) -> BPlus<K> {
         let root = Arc::new(RwLock::new(Node::from(self.root)));
@@ -229,7 +236,7 @@ pub struct BPlusStorage<K> {
     keys_set: Arc<Mutex<HashSet<K>>>,
 }
 
-impl<K: Debug + Ord + Clone + Default + Sync + Send> BPlusStorage<K> {
+impl<K: BPlusKey> BPlusStorage<K> {
     /// Creates new instance of B+ tree with given runtime, t and path
     ///
     /// runtime is tokio runtime
@@ -247,9 +254,7 @@ impl<K: Debug + Ord + Clone + Default + Sync + Send> BPlusStorage<K> {
     }
 }
 
-impl<K: Clone + Ord + std::hash::Hash + Debug + Default + Send + Sync + 'static>
-    Database<K, DataContainer<()>> for BPlusStorage<K>
-{
+impl<K: std::hash::Hash + 'static + BPlusKey> Database<K, DataContainer<()>> for BPlusStorage<K> {
     /// Inserts given value by given key in the B+ tree
     fn insert(&mut self, key: K, value: DataContainer<()>) -> io::Result<()> {
         let tree = self.tree.clone();
@@ -292,7 +297,7 @@ impl<K: Clone + Ord + std::hash::Hash + Debug + Default + Send + Sync + 'static>
 }
 
 #[allow(dead_code)]
-impl<K: Default + Ord + Clone + Debug + Sized + Sync + Send> BPlus<K> {
+impl<K: BPlusKey> BPlus<K> {
     /// Creates new instance of B+ tree with given t and path
     ///
     /// t represents minimal and maximal quantity of keys in node
@@ -615,10 +620,7 @@ impl<K: Default + Ord + Clone + Debug + Sized + Sync + Send> BPlus<K> {
     }
 }
 
-impl<
-        K: Default + Ord + Clone + Debug + Sized + Serialize + for<'de> Deserialize<'de> + Sync + Send,
-    > BPlus<K>
-{
+impl<K: BPlusKeySerializable> BPlus<K> {
     /// Rebuilds links in BPlusTree after loading from file
     async fn rebuild_links(&self) {
         let leaves = self.collect_leaves().await;
@@ -707,7 +709,7 @@ impl<
     }
 }
 
-impl<K: Clone + Ord + Debug> Node<K> {
+impl<K: Clone + Ord> Node<K> {
     /// Splits node into two and returns new node with it first key
     fn split(&mut self, t: usize) -> (Link<K>, Arc<K>) {
         match self {
