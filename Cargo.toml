@@ -15,8 +15,6 @@ gnuplot = "0.0.44"
 approx = "0.5.1"
 rand = "0.8.5"
 tokio = { version = "1.44.2", features = ["full"] }
-env_logger = "0.11.8"
-log = "0.4.27"
 serde = { version = "1.0", features = ["derive"] }
 bincode = "1.3"
 async-recursion = "1.1.1"
