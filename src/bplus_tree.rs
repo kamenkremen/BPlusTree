@@ -25,7 +25,7 @@ const DEFAULT_MAX_FILE_SIZE: u64 = 2 << 20;
 
 extern crate chunkfs;
 
-/// Easily serializable version of BPlusTree
+/// Serializable version of BPlusTree
 #[derive(Serialize, Deserialize)]
 struct SerializableBPlus<K> {
     t: usize,
@@ -55,6 +55,7 @@ struct SerializableLeaf<K> {
 }
 
 impl<K: Clone + Send + Sync> BPlus<K> {
+    /// Returns new instance of SerializableBPlus with data from provided BPlus
     async fn serialize(&self) -> SerializableBPlus<K> {
         SerializableBPlus {
             t: self.t,
@@ -69,6 +70,7 @@ impl<K: Clone + Send + Sync> BPlus<K> {
 
 impl<K: Clone + Send + Sync> Node<K> {
     #[async_recursion]
+    /// Returns new instance of SerializableNode with data from provided Node
     async fn serialize(&self) -> SerializableNode<K> {
         match self {
             Node::Internal(internal) => {
@@ -96,6 +98,7 @@ impl<K: Clone + Send + Sync> Node<K> {
 impl<K: Ord + Default + Clone + Debug + Send + Sync + Serialize + for<'de> Deserialize<'de>>
     SerializableBPlus<K>
 {
+    /// Returns new instance of BPlus with data from provided BPlusSerializable
     async fn deserialize(self) -> BPlus<K> {
         let root = Arc::new(RwLock::new(Node::from(self.root)));
 
@@ -228,8 +231,11 @@ pub struct BPlusStorage<K> {
 
 impl<K: Debug + Ord + Clone + Default + Sync + Send> BPlusStorage<K> {
     /// Creates new instance of B+ tree with given runtime, t and path
+    ///
     /// runtime is tokio runtime
+    ///
     /// t represents minimal and maximum quantity of keys in the node
+    ///
     /// All data will be written in directory by given path
     pub fn new(runtime: Runtime, t: usize, path: PathBuf) -> io::Result<Self> {
         let tree = BPlus::new(t, path).unwrap();
@@ -288,7 +294,9 @@ impl<K: Clone + Ord + std::hash::Hash + Debug + Default + Send + Sync + 'static>
 #[allow(dead_code)]
 impl<K: Default + Ord + Clone + Debug + Sized + Sync + Send> BPlus<K> {
     /// Creates new instance of B+ tree with given t and path
+    ///
     /// t represents minimal and maximal quantity of keys in node
+    ///
     /// All data will be written in files in directory by given path
     pub fn new(t: usize, path: PathBuf) -> io::Result<Self> {
         let path_to_file = path.join("0");
@@ -482,8 +490,6 @@ impl<K: Default + Ord + Clone + Debug + Sized + Sync + Send> BPlus<K> {
         for guard in guards {
             drop(guard);
         }
-
-        // Ok(())
     }
 
     #[allow(unused_variables)]
@@ -540,9 +546,13 @@ impl<K: Default + Ord + Clone + Debug + Sized + Sync + Send> BPlus<K> {
     }
 
     /// For optimistic latch crabbing
+    ///
     /// Insert firstly implies that leaf is safe
+    ///
     /// If it is safe, than inserts(without write locks on other nodes) to the leaf and returns Ok
+    ///
     /// Else, returns Err
+    ///
     /// Also returns Err if root is leaf
     async fn optimistic_insert(&self, key: K, value: ChunkHandler) -> Result<(), ()> {
         let mut latch_guard = Some(self.latch.read());
