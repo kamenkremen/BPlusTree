@@ -322,14 +322,10 @@ impl<K: Default + Ord + Clone + Debug + Sized + Sync + Send> BPlus<K> {
             self.file_number
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             self.offset.store(0, std::sync::atomic::Ordering::SeqCst);
-            *file_guard = File::create(
-                self.path.join(
-                    self.file_number
-                        .load(std::sync::atomic::Ordering::SeqCst)
-                        .to_string(),
-                ),
-            )
-            .unwrap();
+            let file_number = self.file_number.load(Ordering::SeqCst).to_string();
+            let file_path = self.path.join(file_number);
+
+            *file_guard = File::create(file_path).unwrap();
         }
 
         let value_size = value.len();
@@ -374,7 +370,7 @@ impl<K: Default + Ord + Clone + Debug + Sized + Sync + Send> BPlus<K> {
         // Descent to the leaf
         loop {
             let mut current_node = current.write_owned().await;
-            if let Some(guard) = latch_guard {
+            if let Some(guard) = latch_guard.take() {
                 drop(guard);
                 latch_guard = None;
             };
@@ -603,19 +599,19 @@ impl<K: Default + Ord + Clone + Debug + Sized + Sync + Send> BPlus<K> {
 
         let mut leaf = leaf_lock.write().await;
         drop(prev_guard);
-        if let Node::Leaf(leaf_node) = &mut *leaf {
-            if leaf_node.entries.len() == 2 * self.t - 1 {
-                return Err(());
-            }
-
-            match leaf_node.entries.binary_search_by(|(k, _)| k.cmp(&key)) {
-                Ok(pos) => leaf_node.entries[pos].1 = value, // Обновляем без клонирования
-                Err(pos) => leaf_node.entries.insert(pos, (key.clone(), value)),
-            };
-            Ok(())
-        } else {
+        let Node::Leaf(leaf_node) = &mut *leaf else {
             unreachable!()
+        };
+
+        if leaf_node.entries.len() == 2 * self.t - 1 {
+            return Err(());
         }
+
+        match leaf_node.entries.binary_search_by(|(k, _)| k.cmp(&key)) {
+            Ok(pos) => leaf_node.entries[pos].1 = value, // Обновляем без клонирования
+            Err(pos) => leaf_node.entries.insert(pos, (key.clone(), value)),
+        };
+        Ok(())
     }
 }
 
